@@ -7,33 +7,23 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
     <style>
         body { font-family: 'Inter', -apple-system, sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
         .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border-radius: 1rem; padding: 1.25rem; }
-    </style>
-</head>
-<body class="p-3 md:p-6 max-w-5xl mx-auto pb-16">
+        
         @media (max-width: 767px) {
             .mobile-border-b { border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 0.5rem; }
             .mobile-no-border-r { border-right: none; }
-            .glass-card { padding: 1rem; } /* Reduce padding slightly on mobile */
+            .glass-card { padding: 1rem; }
         }
 
-        /* Timeline Specific Styles */
-        .tl-node { width: 2.75rem; height: 2.75rem; border-radius: 9999px; display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 10; position: relative; transition: all 0.3s ease;}
-        @media (min-width: 640px) { .tl-node { width: 3.5rem; height: 3.5rem; } }
-        .tl-active { background-color: #38bdf8; color: white; }
-        .tl-inactive { background-color: #e2e8f0; color: #64748b; }
-        .tl-line-container { flex-grow: 1; height: 6px; background-color: #e2e8f0; position: relative; margin: 0 -0.25rem; z-index: 0; border-radius: 3px; overflow: hidden; }
-        @media (min-width: 640px) { .tl-line-container { margin: 0 -0.5rem; } }
-        .tl-progress { height: 100%; background-color: #38bdf8; position: absolute; top: 0; left: 0; transition: width 1s linear; border-radius: 3px;}
-        
         /* Hide Scrollbar for timeline */
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="p-3 md:p-8 max-w-6xl mx-auto pb-16">
+<body class="p-3 md:p-6 max-w-5xl mx-auto pb-16">
 
     <script>
         // --- CONFIGURATION ---
@@ -41,8 +31,8 @@
         // ---------------------
 
         let globalData = [];
-        let charts = {}; 
-        let animationInterval; // Stores the timeline interval
+        let weekChartObj = null;
+        let animationInterval;
 
         async function init() {
             try {
@@ -51,8 +41,9 @@
                 document.getElementById('loading').classList.add('hidden');
                 document.getElementById('dashboard').classList.remove('hidden');
                 updateDashboard();
+                updateTable();
             } catch (error) {
-                document.getElementById('loading').innerHTML = `<span class="text-rose-500"><i class="fa fa-triangle-exclamation"></i> Error loading data. Check URL and Apps Script permissions.</span>`;
+                document.getElementById('loading').innerHTML = `<span class="text-rose-500"><i class="fa fa-triangle-exclamation"></i> Error loading data. Check URL.</span>`;
             }
         }
 
@@ -63,13 +54,11 @@
             return new Date(dateStr);
         }
 
-        // Parse precise date AND time together into a Date object for animation math
         function parseDateTime(dateStr, timeStr) {
             if (!dateStr || !timeStr || timeStr.trim() === "") return null;
             const d = parseDate(dateStr);
             if (!d) return null;
             
-            // Handle native sheets timestamp (e.g. 1899-12-30T19:27:00.000Z) or raw time (19:27:00)
             let timeString = String(timeStr);
             if (timeString.includes('T')) {
                 const tempD = new Date(timeString);
@@ -96,15 +85,6 @@
             const h = Math.floor(totalMins / 60);
             const m = Math.floor(totalMins % 60);
             return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-        }
-
-        function formatDurationMs(ms) {
-            if (!ms || isNaN(ms)) return "";
-            const totalMins = Math.floor(ms / 60000);
-            const h = Math.floor(totalMins / 60);
-            const m = Math.floor(totalMins % 60);
-            if (h > 0) return `${h}h, ${String(m).padStart(2, '0')}min`;
-            return `${m} min`;
         }
 
         function formatTimeDisplay(timeStr) {
@@ -136,15 +116,13 @@
                 const c = getCommuteTimes(row);
                 if (c.morning) { tMins += c.morning; mCount++; }
                 if (c.evening) { tEve += c.evening; eCount++; }
-                
                 const wMins = parseDur(row['Office Hours']);
                 if (wMins > 0) { tOffice += wMins; oCount++; }
             });
 
-            // Return in minutes. Default to typical times if no history exists.
             return {
                 morning: mCount ? (tMins / mCount) : 30,
-                office: oCount ? (tOffice / oCount) : 540, // 9 hours default
+                office: oCount ? (tOffice / oCount) : 540,
                 evening: eCount ? (tEve / eCount) : 30
             };
         }
@@ -161,83 +139,64 @@
                 filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
             }
 
-            const averages = calculateHistoricalAverages(globalData); // Use global data for stable averages
+            const averages = calculateHistoricalAverages(globalData);
             
             renderTodayActivity(filtered);
             renderDynamicTimeline(filtered, averages);
             renderMonFriChart(globalData);
-            renderAdvancedMetrics(filtered);
         }
 
         function renderDynamicTimeline(data, averages) {
             clearInterval(animationInterval);
-            const row = data[data.length - 1]; // Today's actual data
+            const row = data[data.length - 1]; 
             if (!row) return;
 
-            // Parsed Date objects for exact math
             const tLeaveH = parseDateTime(row.Date, row['Leave Home']);
             const tArriveO = parseDateTime(row.Date, row['Arrive Office']);
             const tLeaveO = parseDateTime(row.Date, row['Leave Office']);
             const tArriveH = parseDateTime(row.Date, row['Arrive Home']);
 
-            // UI Node Updates
-            document.getElementById('tl-node-1').className = tLeaveH ? 'tl-node tl-active' : 'tl-node tl-inactive';
-            document.getElementById('tl-time-1').innerText = formatTimeDisplay(row['Leave Home']);
+            document.getElementById('tl-leave-home').innerText = formatTimeDisplay(row['Leave Home']);
+            document.getElementById('tl-arrive-office').innerText = formatTimeDisplay(row['Arrive Office']);
+            document.getElementById('tl-leave-office').innerText = formatTimeDisplay(row['Leave Office']);
+            document.getElementById('tl-arrive-home').innerText = formatTimeDisplay(row['Arrive Home']);
 
-            document.getElementById('tl-node-2').className = tArriveO ? 'tl-node tl-active' : 'tl-node tl-inactive';
-            document.getElementById('tl-time-2').innerText = formatTimeDisplay(row['Arrive Office']);
-
-            document.getElementById('tl-node-3').className = tLeaveO ? 'tl-node tl-active' : 'tl-node tl-inactive';
-            document.getElementById('tl-time-3').innerText = formatTimeDisplay(row['Leave Office']);
-
-            document.getElementById('tl-node-4').className = tArriveH ? 'tl-node tl-active' : 'tl-node tl-inactive';
-            document.getElementById('tl-time-4').innerText = formatTimeDisplay(row['Arrive Home']);
-
-            // Animation Loop Function
             const updateVisuals = () => {
                 const now = new Date();
 
-                // Helper to update segment with optional multi-line text
-                const setSeg = (id, pct, text1, text2) => {
-                    document.getElementById(`seg-prog-${id}`).style.width = `${pct}%`;
-                    const textEl = document.getElementById(`seg-text-${id}`);
-                    textEl.innerHTML = text2 ? `${text1}<br/>${text2}` : text1;
-                };
-
-                // SEGMENT 1: Home to Office
+                // Segment 1
                 if (tLeaveH && tArriveO) {
-                    setSeg(1, 100, formatDurationMs(tArriveO - tLeaveH), null);
+                    document.getElementById('bar-1').style.width = '100%';
                 } else if (tLeaveH && !tArriveO) {
                     let pct = ((now - tLeaveH) / (averages.morning * 60000)) * 100;
-                    setSeg(1, Math.min(Math.max(pct, 0), 99), "On the way", null);
+                    document.getElementById('bar-1').style.width = Math.min(Math.max(pct, 0), 99) + '%';
                 } else {
-                    setSeg(1, 0, "", null);
+                    document.getElementById('bar-1').style.width = '0%';
                 }
 
-                // SEGMENT 2: Office Hours
+                // Segment 2
                 if (tArriveO && tLeaveO) {
-                    setSeg(2, 100, formatDurationMs(tLeaveO - tArriveO), "in office");
+                    document.getElementById('bar-2').style.width = '100%';
                 } else if (tArriveO && !tLeaveO) {
                     let pct = ((now - tArriveO) / (averages.office * 60000)) * 100;
-                    setSeg(2, Math.min(Math.max(pct, 0), 99), "waiting for", "office leave");
+                    document.getElementById('bar-2').style.width = Math.min(Math.max(pct, 0), 99) + '%';
                 } else {
-                    setSeg(2, 0, "waiting for", "office leave");
+                    document.getElementById('bar-2').style.width = '0%';
                 }
 
-                // SEGMENT 3: Office to Home
+                // Segment 3
                 if (tLeaveO && tArriveH) {
-                    setSeg(3, 100, formatDurationMs(tArriveH - tLeaveO), null);
+                    document.getElementById('bar-3').style.width = '100%';
                 } else if (tLeaveO && !tArriveH) {
                     let pct = ((now - tLeaveO) / (averages.evening * 60000)) * 100;
-                    setSeg(3, Math.min(Math.max(pct, 0), 99), "On the way", null);
+                    document.getElementById('bar-3').style.width = Math.min(Math.max(pct, 0), 99) + '%';
                 } else {
-                    setSeg(3, 0, "waiting for", "home arrival");
+                    document.getElementById('bar-3').style.width = '0%';
                 }
             };
 
-            // Run immediately, then interval
             updateVisuals();
-            animationInterval = setInterval(updateVisuals, 30000); // Check every 30 seconds
+            animationInterval = setInterval(updateVisuals, 30000); 
         }
 
         function renderTodayActivity(data) {
@@ -291,8 +250,9 @@
                 }
             }
 
-            if(charts.week) charts.week.destroy();
-            charts.week = new Chart(document.getElementById('weekChart'), {
+            const ctx = document.getElementById('weekChart').getContext('2d');
+            if(weekChartObj) weekChartObj.destroy();
+            weekChartObj = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
@@ -305,283 +265,244 @@
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => Math.abs(ctx.raw) + ' mins ' + (ctx.raw >= 0 ? 'Early' : 'Late') } } },
                     scales: {
-                        y: { display: true, title: { display: true, text: 'Minutes' } },
-                        x: { grid: { display: false } }
+                        y: { display: true, title: { display: true, text: 'Minutes', font: { size: 10 } }, ticks: { font: { size: 10 } }, border: { display: false }, grid: { borderDash: [4, 4] } },
+                        x: { grid: { display: false }, ticks: { font: { size: 10 } } }
                     }
                 }
             });
         }
 
-        function renderAdvancedMetrics(data) {
-            let totalMCommute = 0, totalECommute = 0, mCount = 0, eCount = 0;
-            let early = 0, late = 0, ontime = 0;
-            let totalWorkMins = 0, daysWorked = 0;
-            let maxC = 0, minC = 999;
-            let statuses = { 'Complete': 0, 'Waiting': 0 };
+        function updateTable() {
+            const range = document.getElementById('tableRangeSelect').value;
+            const customDates = document.getElementById('tableCustomDates');
+            const tbody = document.getElementById('tableBody');
             
-            const hoursTrendData = [];
-            const hoursTrendLabels = [];
+            let filtered = globalData.filter(row => row.Date && row.Date.trim() !== "");
+            const now = new Date();
 
-            data.forEach(row => {
-                const c = getCommuteTimes(row);
-                if(c.morning) { totalMCommute += c.morning; mCount++; }
-                if(c.evening) { totalECommute += c.evening; eCount++; }
-                
-                const dayCommute = (c.morning||0) + (c.evening||0);
-                if(dayCommute > 0) {
-                    if(dayCommute > maxC) maxC = dayCommute;
-                    if(dayCommute < minC) minC = dayCommute;
-                }
-
-                if (row['Early']) early++;
-                else if (row['Late']) late++;
-                else if (row['Arrive Office']) ontime++;
-
-                const workMins = parseDur(row['Office Hours']);
-                if (workMins > 0) {
-                    totalWorkMins += workMins;
-                    daysWorked++;
-                    hoursTrendLabels.push(parseDate(row.Date).toLocaleDateString([], {month:'short', day:'numeric'}));
-                    hoursTrendData.push(workMins / 60);
-                }
-
-                if(String(row['Status']).includes('Complete')) statuses['Complete']++;
-                else statuses['Waiting']++;
-            });
-
-            const avgM = mCount ? Math.round(totalMCommute/mCount) : 0;
-            const avgE = eCount ? Math.round(totalECommute/eCount) : 0;
-            document.getElementById('avg-m-commute').innerText = avgM + " min";
-            document.getElementById('avg-e-commute').innerText = avgE + " min";
-            
-            const totalHoursLost = Math.floor((totalMCommute + totalECommute)/60);
-            const totalMinsLost = (totalMCommute + totalECommute) % 60;
-            document.getElementById('total-transit').innerText = `${totalHoursLost}h ${totalMinsLost}m`;
-            
-            document.getElementById('best-worst').innerText = (minC===999 ? 0 : minC) + "m / " + maxC + "m";
-            
-            const expectedMins = daysWorked * 9 * 60;
-            const diff = totalWorkMins - expectedMins;
-            const diffEl = document.getElementById('work-diff');
-            
-            if (diff === 0 && daysWorked === 0) {
-                diffEl.innerText = "--";
-                diffEl.className = "mt-1";
+            if (range === 'custom') {
+                customDates.classList.remove('hidden');
+                const start = new Date(document.getElementById('startDate').value);
+                const end = new Date(document.getElementById('endDate').value);
+                if(!isNaN(start) && !isNaN(end)) {
+                    filtered = filtered.filter(row => { const d = parseDate(row.Date); return d >= start && d <= end; });
+                } else { filtered = []; }
             } else {
-                diffEl.innerText = (diff >= 0 ? "+" : "-") + formatMinsToHHMM(Math.abs(diff));
-                diffEl.className = diff >= 0 ? "text-xl font-bold text-emerald-600 mt-1" : "text-xl font-bold text-rose-600 mt-1";
+                customDates.classList.add('hidden');
+                if (range === 'currentMonth') {
+                    filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === now.getMonth() && parseDate(row.Date)?.getFullYear() === now.getFullYear());
+                } else if (range === 'lastMonth') {
+                    let lm = now.getMonth() - 1; let y = now.getFullYear(); if (lm < 0) { lm = 11; y--; }
+                    filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
+                }
             }
 
-            if(charts.punctuality) charts.punctuality.destroy();
-            charts.punctuality = new Chart(document.getElementById('punctualityChart'), {
-                type: 'doughnut',
-                data: { labels: ['Early/On-Time', 'Late'], datasets: [{ data: [early+ontime, late], backgroundColor: ['#10b981', '#f43f5e'], borderWidth: 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom' } } }
-            });
-
-            if(charts.hours) charts.hours.destroy();
-            charts.hours = new Chart(document.getElementById('hoursChart'), {
-                type: 'line',
-                data: { labels: hoursTrendLabels, datasets: [{ label: 'Hours', data: hoursTrendData, borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.1)', fill: true, tension: 0.4 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }
-            });
-
-            if(charts.status) charts.status.destroy();
-            charts.status = new Chart(document.getElementById('statusChart'), {
-                type: 'pie',
-                data: { labels: ['Complete', 'Waiting'], datasets: [{ data: [statuses.Complete, statuses.Waiting], backgroundColor: ['#3b82f6', '#fbbf24'], borderWidth: 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            tbody.innerHTML = "";
+            filtered.forEach(row => {
+                const c = getCommuteTimes(row);
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-slate-100 hover:bg-slate-50 transition-colors text-[11px]";
+                tr.innerHTML = `
+                    <td class="px-2 py-3 font-bold text-slate-700 whitespace-nowrap">${row.Date}</td>
+                    <td class="px-2 py-3">${formatTimeDisplay(row['Leave Home'])}</td>
+                    <td class="px-2 py-3 font-medium text-slate-400 italic">${c.morning ? c.morning + 'm' : '--'}</td>
+                    <td class="px-2 py-3 text-emerald-600 font-bold">${formatTimeDisplay(row['Arrive Office'])}</td>
+                    <td class="px-2 py-3 font-bold text-indigo-600">${row['Office Hours'] || '--'}</td>
+                    <td class="px-2 py-3 text-rose-600 font-bold">${formatTimeDisplay(row['Leave Office'])}</td>
+                    <td class="px-2 py-3 font-medium text-slate-400 italic">${c.evening ? c.evening + 'm' : '--'}</td>
+                    <td class="px-2 py-3">${formatTimeDisplay(row['Arrive Home'])}</td>
+                `;
+                tbody.appendChild(tr);
             });
         }
 
         window.onload = init;
     </script>
 
-    <div id="loading" class="text-center py-20 text-slate-500 font-bold animate-pulse text-xl">
+    <div id="loading" class="text-center py-20 text-slate-500 font-bold animate-pulse text-sm">
         <i class="fa fa-circle-notch fa-spin mr-2 text-indigo-500"></i> Fetching Live Data...
     </div>
 
-    <div id="dashboard" class="hidden space-y-6">
+    <div id="dashboard" class="hidden space-y-4">
         
-        <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+        <!-- Header -->
+        <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
             <div>
-                <h1 class="text-2xl font-black text-slate-800 tracking-tight">Travel & Work Insights</h1>
-                <p class="text-slate-500 text-sm font-medium">Real-time Animation Dashboard</p>
+                <h1 class="text-xl font-black text-slate-800 tracking-tight leading-tight">Travel & Work <br>Insights</h1>
+                <p class="text-slate-500 text-[9px] font-bold uppercase tracking-wider mt-1">Real-time Animation Dashboard</p>
             </div>
-            <select id="rangeSelect" onchange="updateDashboard()" class="mt-4 md:mt-0 bg-slate-50 border border-slate-200 text-slate-700 font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 w-full md:w-auto">
-                <option value="currentMonth" selected>Current Month</option>
-                <option value="lastMonth">Last Month</option>
-                <option value="all">All Time</option>
-            </select>
+            <div class="flex flex-col items-end gap-2">
+                <button onclick="init()" class="bg-slate-50 hover:bg-slate-100 text-slate-600 p-2 rounded-full transition-colors border border-slate-200">
+                    <i class="fa fa-rotate-right text-xs"></i>
+                </button>
+                <select id="rangeSelect" onchange="updateDashboard()" class="bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold py-1 px-2 rounded focus:outline-none">
+                    <option value="currentMonth" selected>Current Month</option>
+                    <option value="lastMonth">Last Month</option>
+                    <option value="all">All Time</option>
+                </select>
+            </div>
         </div>
 
-        <!-- NEW VISUAL TIMELINE -->
+        <!-- Today's Visual Timeline -->
         <div class="glass-card overflow-hidden">
-            <h2 class="text-xl font-extrabold text-slate-800 mb-6 flex items-center">
-                <i class="fa-solid fa-route text-sky-500 mr-2"></i> Real-Time Journey
-            </h2>
+            <h2 class="text-sm font-bold text-slate-800 mb-6"><i class="fa-solid fa-route text-sky-400 mr-2"></i> Real-Time Journey</h2>
             
             <div class="overflow-x-auto hide-scrollbar -mx-2 px-2">
-                <div class="flex items-start justify-between w-full min-w-[380px] max-w-4xl mx-auto px-1 sm:px-8 mb-4">
+                <div class="flex items-start justify-between w-full min-w-[320px] max-w-2xl mx-auto mb-2">
                     
                     <!-- Node 1: Home -->
-                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
-                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
-                    <div class="w-8 h-px bg-slate-200 my-1"></div>
-                    <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
-                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-home">--:--</p>
-                </div>
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-home">--:--</p>
+                    </div>
 
-                <!-- Segment 1 -->
-                <div class="flex-1 relative mx-[-12px] z-0">
-                    <div class="absolute w-full top-[20px] -translate-y-1/2 h-1 bg-slate-200"></div>
-                    <div id="bar-1" class="absolute top-[20px] -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
-                </div>
+                    <!-- Segment 1: perfectly aligned to top-[20px] -->
+                    <div class="flex-1 relative mx-[-12px] z-0">
+                        <div class="absolute w-full top-[20px] transform -translate-y-1/2 h-1 bg-slate-200"></div>
+                        <div id="bar-1" class="absolute top-[20px] transform -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
+                    </div>
 
-                <!-- Node 2: Office Arrive -->
-                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building"></i></div>
-                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
-                    <div class="w-8 h-px bg-slate-200 my-1"></div>
-                    <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
-                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-office">--:--</p>
-                </div>
+                    <!-- Node 2: Office Arrive -->
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-office">--:--</p>
+                    </div>
 
-                <!-- Segment 2 -->
-                <div class="flex-1 relative mx-[-12px] z-0">
-                    <div class="absolute w-full top-[20px] -translate-y-1/2 h-1 bg-slate-200"></div>
-                    <div id="bar-2" class="absolute top-[20px] -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
-                </div>
+                    <!-- Segment 2 -->
+                    <div class="flex-1 relative mx-[-12px] z-0">
+                        <div class="absolute w-full top-[20px] transform -translate-y-1/2 h-1 bg-slate-200"></div>
+                        <div id="bar-2" class="absolute top-[20px] transform -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
+                    </div>
 
-                <!-- Node 3: Office Leave -->
-                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building-user"></i></div>
-                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
-                    <div class="w-8 h-px bg-slate-200 my-1"></div>
-                    <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
-                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-office">--:--</p>
-                </div>
+                    <!-- Node 3: Office Leave -->
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building-user"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-office">--:--</p>
+                    </div>
 
-                <!-- Segment 3 -->
-                <div class="flex-1 relative mx-[-12px] z-0">
-                    <div class="absolute w-full top-[20px] -translate-y-1/2 h-1 bg-slate-200"></div>
-                    <div id="bar-3" class="absolute top-[20px] -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
-                </div>
+                    <!-- Segment 3 -->
+                    <div class="flex-1 relative mx-[-12px] z-0">
+                        <div class="absolute w-full top-[20px] transform -translate-y-1/2 h-1 bg-slate-200"></div>
+                        <div id="bar-3" class="absolute top-[20px] transform -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
+                    </div>
 
-                <!-- Node 4: Home Arrive -->
-                    <div class="flex flex-col items-center w-16 sm:w-24 shrink-0">
-                        <div id="tl-node-4" class="tl-node tl-inactive text-xs sm:text-sm font-bold shadow-md">
-                            <i class="fa fa-check mb-0.5"></i>
-                        </div>
-                        <p class="text-[11px] sm:text-sm font-bold text-slate-800 mt-1.5 sm:mt-2">Home</p>
-                        <div class="w-14 sm:w-20 border-b border-slate-300 my-1 sm:my-1.5"></div>
-                        <p class="text-[8px] sm:text-[10px] font-bold text-green-500 uppercase tracking-wide">Arrive At</p>
-                        <p class="text-xs sm:text-lg font-black text-slate-800 tracking-tight" id="tl-time-4">--:--</p>
+                    <!-- Node 4: Home Arrive -->
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-home">--:--</p>
                     </div>
 
                 </div>
             </div>
         </div>
 
-        <!-- Today's Activity Stats Grid -->
+        <!-- Today's Summary Grid -->
         <div class="glass-card">
-            <h2 class="text-xl font-extrabold text-slate-800 mb-6 flex items-center">
-                <i class="fa-solid fa-calendar-day text-sky-500 mr-2"></i> Today's Summary
-            </h2>
+            <h2 class="text-sm font-bold text-slate-800 mb-4"><i class="fa-solid fa-calendar-day text-blue-500 mr-2"></i> Today's Summary</h2>
             
-            <div class="grid grid-cols-2 md:grid-cols-4 text-center">
-                <div class="col-divider mobile-border-b px-1 md:px-2 flex flex-col justify-center">
-                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Travel Time</p>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Home to office</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-m-travel">--</p>
-                    <div class="h-3 sm:h-4"></div>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Office to Home</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-e-travel">--</p>
+            <div class="grid grid-cols-2 gap-y-6 border-t border-slate-100 pt-5 relative">
+                
+                <!-- Q1: Travel Time -->
+                <div class="text-center border-r border-slate-100 pr-2">
+                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Travel Time</p>
+                    <p class="text-[10px] text-slate-500 mb-1">Home to office</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-m-travel">--</p>
+                    <p class="text-[10px] text-slate-500 mt-4 mb-1">Office to Home</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-e-travel">--</p>
                 </div>
 
-                <div class="col-divider mobile-border-b mobile-no-border-r px-1 md:px-2 flex flex-col justify-center">
-                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Morning Commute</p>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Leave Home at</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-h">--:--</p>
-                    <div class="h-3 sm:h-4"></div>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Arrive Office at</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-o">--:--</p>
+                <!-- Q2: Morning Commute -->
+                <div class="text-center pl-2">
+                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Morning Commute</p>
+                    <p class="text-[10px] text-slate-500 mb-1">Leave Home at</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-leave-h">--:--</p>
+                    <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrive Office at</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-arrive-o">--:--</p>
                 </div>
 
-                <div class="col-divider px-1 md:px-2 flex flex-col justify-center pt-2 md:pt-0">
-                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Evening Commute</p>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Office Leave at</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-o">--:--</p>
-                    <div class="h-3 sm:h-4"></div>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Arrived home at</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-h">--:--</p>
+                <div class="col-span-2 border-b border-slate-100 my-[-8px]"></div>
+
+                <!-- Q3: Evening Commute -->
+                <div class="text-center border-r border-slate-100 pr-2 pt-2">
+                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Evening Commute</p>
+                    <p class="text-[10px] text-slate-500 mb-1">Office Leave at</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-leave-o">--:--</p>
+                    <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrived home at</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-arrive-h">--:--</p>
                 </div>
 
-                <div class="px-1 md:px-2 flex flex-col justify-center pt-2 md:pt-0">
-                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Work Details</p>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">todays work hour</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-work-hr">--:--</p>
-                    <div class="h-3 sm:h-4"></div>
-                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">average work hour</p>
-                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-avg-work">--:--</p>
+                <!-- Q4: Work Details -->
+                <div class="text-center pl-2 pt-2">
+                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Work Details</p>
+                    <p class="text-[10px] text-slate-500 mb-1">todays work hour</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-work-hr">--:--</p>
+                    <p class="text-[10px] text-slate-500 mt-4 mb-1">average work hour</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-avg-work">--:--</p>
                 </div>
+
             </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="glass-card">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-lg font-bold text-slate-800"><i class="fa-regular fa-calendar-check text-emerald-500 mr-2"></i> Current Week (Mon-Fri)</h2>
+        <!-- Strict Mon-Fri Chart -->
+        <div class="glass-card">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-sm font-bold text-slate-800"><i class="fa-regular fa-calendar-check text-indigo-500 mr-2"></i> Current Week (Mon-Fri)</h2>
+                <div class="flex gap-2 text-[10px] font-bold">
+                    <span class="flex items-center text-emerald-600"><div class="w-2 h-2 rounded-full bg-emerald-500 mr-1"></div> Early</span>
+                    <span class="flex items-center text-rose-600"><div class="w-2 h-2 rounded-full bg-rose-500 mr-1"></div> Late</span>
                 </div>
-                <div class="h-48"><canvas id="weekChart"></canvas></div>
             </div>
-
-            <div class="glass-card">
-                <h2 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-chart-line text-blue-500 mr-2"></i> Office Hours Trend</h2>
-                <div class="h-48"><canvas id="hoursChart"></canvas></div>
-            </div>
+            <div class="h-48 w-full"><canvas id="weekChart"></canvas></div>
         </div>
 
-        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div class="glass-card text-center p-4">
-                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Morning</p>
-                <p class="text-xl sm:text-2xl font-black text-sky-500 mt-1" id="avg-m-commute">--</p>
+        <!-- Data Table Section -->
+        <div class="glass-card overflow-hidden">
+            <div class="flex flex-col mb-4">
+                <h2 class="text-sm font-bold text-slate-800 mb-3"><i class="fa fa-table-list text-purple-500 mr-2"></i> Log History Table</h2>
+                <select id="tableRangeSelect" onchange="updateTable()" class="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold py-2 px-2 rounded focus:outline-none w-full mb-2">
+                    <option value="currentMonth" selected>Current Month</option>
+                    <option value="lastMonth">Last Month</option>
+                    <option value="all">All Time</option>
+                    <option value="custom">Custom Range</option>
+                </select>
+                <div id="tableCustomDates" class="hidden flex gap-2">
+                    <input type="date" id="startDate" onchange="updateTable()" class="border border-slate-200 text-slate-700 font-medium py-1 px-1 rounded text-[10px] w-full">
+                    <input type="date" id="endDate" onchange="updateTable()" class="border border-slate-200 text-slate-700 font-medium py-1 px-1 rounded text-[10px] w-full">
+                </div>
             </div>
-            <div class="glass-card text-center p-4">
-                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Evening</p>
-                <p class="text-xl sm:text-2xl font-black text-indigo-500 mt-1" id="avg-e-commute">--</p>
-            </div>
-            <div class="glass-card text-center p-4">
-                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Total Time Lost</p>
-                <p class="text-xl sm:text-2xl font-black text-slate-700 mt-1" id="total-transit">--</p>
-            </div>
-            <div class="glass-card text-center p-4">
-                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Best/Worst Day</p>
-                <p class="text-lg sm:text-xl font-black text-slate-700 mt-1" id="best-worst">--</p>
-            </div>
-            <div class="glass-card text-center p-4">
-                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Hrs vs 9h Target</p>
-                <p class="mt-1" id="work-diff">--</p>
-            </div>
-            <div class="glass-card text-center p-4 flex items-center justify-center">
-                <button onclick="init()" class="bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors w-full h-full min-h-[3rem] shadow-sm">
-                    <i class="fa fa-rotate-right mr-1"></i> Refresh
-                </button>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="glass-card">
-                <h2 class="text-lg font-bold text-slate-800 mb-4 text-center">Overall Punctuality</h2>
-                <div class="h-40 w-full"><canvas id="punctualityChart"></canvas></div>
-            </div>
-
-            <div class="glass-card">
-                <h2 class="text-lg font-bold text-slate-800 mb-4 text-center">Log Status</h2>
-                <div class="h-40 w-full"><canvas id="statusChart"></canvas></div>
+            
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+                <table class="w-full text-left whitespace-nowrap">
+                    <thead class="text-[10px] text-slate-600 bg-slate-100 uppercase font-black">
+                        <tr>
+                            <th class="px-3 py-2 border-b border-slate-200">Date</th>
+                            <th class="px-3 py-2 border-b border-slate-200">Leave Home</th>
+                            <th class="px-3 py-2 border-b border-slate-200">Time</th>
+                            <th class="px-3 py-2 border-b border-slate-200">Arrive Office</th>
+                            <th class="px-3 py-2 border-b border-slate-200">Work Time</th>
+                            <th class="px-3 py-2 border-b border-slate-200">Leave Office</th>
+                            <th class="px-3 py-2 border-b border-slate-200">Time</th>
+                            <th class="px-3 py-2 border-b border-slate-200">Arrive Home</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
             </div>
         </div>
 
