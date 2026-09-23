@@ -7,20 +7,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
     <style>
         body { font-family: 'Inter', -apple-system, sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
         .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border-radius: 1rem; padding: 1.25rem; }
-        
-        @media (max-width: 767px) {
-            .mobile-border-b { border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 0.5rem; }
-            .mobile-no-border-r { border-right: none; }
-            .glass-card { padding: 1rem; }
-        }
-
-        /* Hide Scrollbar for timeline */
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="p-3 md:p-6 max-w-5xl mx-auto pb-16">
@@ -32,7 +21,6 @@
 
         let globalData = [];
         let weekChartObj = null;
-        let animationInterval;
 
         async function init() {
             try {
@@ -49,27 +37,19 @@
 
         function parseDate(dateStr) {
             if (!dateStr) return null;
+            if (dateStr.includes('T')) return new Date(dateStr);
             const parts = dateStr.split('/');
             if (parts.length === 3) return new Date(parts[2], parts[1] - 1, parts[0]);
             return new Date(dateStr);
         }
 
-        function parseDateTime(dateStr, timeStr) {
-            if (!dateStr || !timeStr || timeStr.trim() === "") return null;
+        function formatDisplayDate(dateStr) {
             const d = parseDate(dateStr);
-            if (!d) return null;
-            
-            let timeString = String(timeStr);
-            if (timeString.includes('T')) {
-                const tempD = new Date(timeString);
-                d.setHours(tempD.getHours(), tempD.getMinutes(), tempD.getSeconds());
-            } else {
-                const parts = timeString.split(':');
-                if (parts.length >= 2) {
-                    d.setHours(parseInt(parts[0]), parseInt(parts[1]), parts.length > 2 ? parseInt(parts[2]) : 0);
-                }
-            }
-            return d;
+            if (!d || isNaN(d)) return dateStr;
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const year = d.getFullYear();
+            return `${day}/${month}/${year}`;
         }
 
         function parseDur(durStr) {
@@ -80,15 +60,13 @@
             return mins;
         }
 
-        function formatMinsToHHMM(totalMins) {
+        function formatMins(totalMins) {
             if (!totalMins || isNaN(totalMins)) return "00:00";
-            const h = Math.floor(totalMins / 60);
-            const m = Math.floor(totalMins % 60);
-            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+            return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(Math.floor(totalMins % 60)).padStart(2, '0')}`;
         }
 
-        function formatTimeDisplay(timeStr) {
-            if (!timeStr || String(timeStr).trim() === "") return "--:--";
+        function formatTime(timeStr) {
+            if (!timeStr) return "--:--";
             let str = String(timeStr).split(':').slice(0,2).join(':');
             if (String(timeStr).includes('T')) {
                 str = new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
@@ -97,137 +75,74 @@
         }
 
         function getCommuteTimes(row) {
-            let m = 0, e = 0;
-            const th = parseDur(formatTimeDisplay(row['Leave Home']).replace(':','h')+'m');
-            const to = parseDur(formatTimeDisplay(row['Arrive Office']).replace(':','h')+'m');
-            const tl = parseDur(formatTimeDisplay(row['Leave Office']).replace(':','h')+'m');
-            const ta = parseDur(formatTimeDisplay(row['Arrive Home']).replace(':','h')+'m');
+            let m = null, e = null;
+            const th = parseDur(formatTime(row['Leave Home']).replace(':','h')+'m');
+            const to = parseDur(formatTime(row['Arrive Office']).replace(':','h')+'m');
+            const tl = parseDur(formatTime(row['Leave Office']).replace(':','h')+'m');
+            const ta = parseDur(formatTime(row['Arrive Home']).replace(':','h')+'m');
             if(th && to) m = to - th;
             if(tl && ta) e = ta - tl;
             return { morning: m > 0 ? m : null, evening: e > 0 ? e : null };
         }
 
-        function calculateHistoricalAverages(data) {
-            let tMins = 0, mCount = 0;
-            let tOffice = 0, oCount = 0;
-            let tEve = 0, eCount = 0;
-
-            data.forEach(row => {
-                const c = getCommuteTimes(row);
-                if (c.morning) { tMins += c.morning; mCount++; }
-                if (c.evening) { tEve += c.evening; eCount++; }
-                const wMins = parseDur(row['Office Hours']);
-                if (wMins > 0) { tOffice += wMins; oCount++; }
-            });
-
-            return {
-                morning: mCount ? (tMins / mCount) : 30,
-                office: oCount ? (tOffice / oCount) : 540,
-                evening: eCount ? (tEve / eCount) : 30
-            };
-        }
-
         function updateDashboard() {
-            const range = document.getElementById('rangeSelect').value;
-            const now = new Date();
-            let filtered = globalData.filter(row => row.Date && row.Date.trim() !== "");
-
-            if (range === 'currentMonth') {
-                filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === now.getMonth() && parseDate(row.Date)?.getFullYear() === now.getFullYear());
-            } else if (range === 'lastMonth') {
-                let lm = now.getMonth() - 1; let y = now.getFullYear(); if (lm < 0) { lm = 11; y--; }
-                filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
-            }
-
-            const averages = calculateHistoricalAverages(globalData);
-            
-            renderTodayActivity(filtered);
-            renderDynamicTimeline(filtered, averages);
-            renderMonFriChart(globalData);
+            const validData = globalData.filter(row => row.Date && row.Date.trim() !== "");
+            renderTodayTimeline(validData);
+            renderTodaySummary(validData);
+            renderMonFriChart(validData);
         }
 
-        function renderDynamicTimeline(data, averages) {
-            clearInterval(animationInterval);
-            const row = data[data.length - 1]; 
+        function renderTodayTimeline(data) {
+            const row = data[data.length - 1];
             if (!row) return;
 
-            const tLeaveH = parseDateTime(row.Date, row['Leave Home']);
-            const tArriveO = parseDateTime(row.Date, row['Arrive Office']);
-            const tLeaveO = parseDateTime(row.Date, row['Leave Office']);
-            const tArriveH = parseDateTime(row.Date, row['Arrive Home']);
+            document.getElementById('tl-leave-home').innerText = formatTime(row['Leave Home']);
+            document.getElementById('tl-arrive-office').innerText = formatTime(row['Arrive Office']);
+            document.getElementById('tl-leave-office').innerText = formatTime(row['Leave Office']);
+            document.getElementById('tl-arrive-home').innerText = formatTime(row['Arrive Home']);
 
-            document.getElementById('tl-leave-home').innerText = formatTimeDisplay(row['Leave Home']);
-            document.getElementById('tl-arrive-office').innerText = formatTimeDisplay(row['Arrive Office']);
-            document.getElementById('tl-leave-office').innerText = formatTimeDisplay(row['Leave Office']);
-            document.getElementById('tl-arrive-home').innerText = formatTimeDisplay(row['Arrive Home']);
+            let w1 = "0%", w2 = "0%", w3 = "0%";
+            
+            if(row['Arrive Office']) w1 = "100%";
+            else if(row['Leave Home']) w1 = "50%";
+            
+            if(row['Leave Office']) w2 = "100%";
+            else if(row['Arrive Office']) w2 = "50%";
 
-            const updateVisuals = () => {
-                const now = new Date();
+            if(row['Arrive Home']) w3 = "100%";
+            else if(row['Leave Office']) w3 = "50%";
 
-                // Segment 1
-                if (tLeaveH && tArriveO) {
-                    document.getElementById('bar-1').style.width = '100%';
-                } else if (tLeaveH && !tArriveO) {
-                    let pct = ((now - tLeaveH) / (averages.morning * 60000)) * 100;
-                    document.getElementById('bar-1').style.width = Math.min(Math.max(pct, 0), 99) + '%';
-                } else {
-                    document.getElementById('bar-1').style.width = '0%';
-                }
-
-                // Segment 2
-                if (tArriveO && tLeaveO) {
-                    document.getElementById('bar-2').style.width = '100%';
-                } else if (tArriveO && !tLeaveO) {
-                    let pct = ((now - tArriveO) / (averages.office * 60000)) * 100;
-                    document.getElementById('bar-2').style.width = Math.min(Math.max(pct, 0), 99) + '%';
-                } else {
-                    document.getElementById('bar-2').style.width = '0%';
-                }
-
-                // Segment 3
-                if (tLeaveO && tArriveH) {
-                    document.getElementById('bar-3').style.width = '100%';
-                } else if (tLeaveO && !tArriveH) {
-                    let pct = ((now - tLeaveO) / (averages.evening * 60000)) * 100;
-                    document.getElementById('bar-3').style.width = Math.min(Math.max(pct, 0), 99) + '%';
-                } else {
-                    document.getElementById('bar-3').style.width = '0%';
-                }
-            };
-
-            updateVisuals();
-            animationInterval = setInterval(updateVisuals, 30000); 
+            document.getElementById('bar-1').style.width = w1;
+            document.getElementById('bar-2').style.width = w2;
+            document.getElementById('bar-3').style.width = w3;
         }
 
-        function renderTodayActivity(data) {
-            const row = data[data.length - 1]; 
+        function renderTodaySummary(data) {
+            const row = data[data.length - 1];
+            if (!row) return;
+
+            const commutes = getCommuteTimes(row);
             
-            let totalFilteredWorkMins = 0;
-            let validFilteredDays = 0;
+            let totalWorkMins = 0;
+            let validWorkDays = 0;
             data.forEach(r => {
-                const wMins = parseDur(r['Office Hours']);
-                if (wMins > 0) { totalFilteredWorkMins += wMins; validFilteredDays++; }
+                const mins = parseDur(r['Office Hours']);
+                if(mins > 0) { totalWorkMins += mins; validWorkDays++; }
             });
-            const avgWorkMins = validFilteredDays > 0 ? Math.round(totalFilteredWorkMins / validFilteredDays) : 0;
-            document.getElementById('tdy-avg-work').innerText = formatMinsToHHMM(avgWorkMins);
+            const avgWork = validWorkDays > 0 ? formatMins(totalWorkMins / validWorkDays) : "--:--";
 
-            if (!row) return;
+            document.getElementById('sum-m-time').innerText = commutes.morning ? commutes.morning + " min" : "--";
+            document.getElementById('sum-e-time').innerText = commutes.evening ? commutes.evening + " min" : "--";
+            
+            document.getElementById('sum-leave-home').innerText = formatTime(row['Leave Home']);
+            document.getElementById('sum-arrive-office').innerText = formatTime(row['Arrive Office']);
+            
+            document.getElementById('sum-leave-office').innerText = formatTime(row['Leave Office']);
+            document.getElementById('sum-arrive-home').innerText = formatTime(row['Arrive Home']);
 
-            const commute = getCommuteTimes(row);
-            document.getElementById('tdy-m-travel').innerText = commute.morning ? commute.morning + " min" : "--";
-            document.getElementById('tdy-e-travel').innerText = commute.evening ? commute.evening + " min" : "--";
-
-            document.getElementById('tdy-leave-h').innerText = formatTimeDisplay(row['Leave Home']);
-            document.getElementById('tdy-arrive-o').innerText = formatTimeDisplay(row['Arrive Office']);
-            document.getElementById('tdy-leave-o').innerText = formatTimeDisplay(row['Leave Office']);
-            document.getElementById('tdy-arrive-h').innerText = formatTimeDisplay(row['Arrive Home']);
-
-            let workHrsFormatted = "--:--";
-            if (row['Office Hours']) {
-                workHrsFormatted = row['Office Hours'].replace('h ', ':').replace('m', '');
-                if (!workHrsFormatted.includes(':')) workHrsFormatted += ":00";
-            }
-            document.getElementById('tdy-work-hr').innerText = workHrsFormatted;
+            const todayWork = row['Office Hours'] ? row['Office Hours'].replace('h ', ':').replace('m', '') : "--:--";
+            document.getElementById('sum-work-hour').innerText = todayWork;
+            document.getElementById('sum-avg-work').innerText = avgWork;
         }
 
         function renderMonFriChart(allData) {
@@ -255,17 +170,20 @@
             weekChartObj = new Chart(ctx, {
                 type: 'bar',
                 data: {
-                    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+                    labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
                     datasets: [{
                         data: dataPoints,
                         backgroundColor: ctx => ctx.raw >= 0 ? '#10b981' : '#f43f5e',
                         borderRadius: 4,
-                        barPercentage: 0.5
+                        barPercentage: 0.4
                     }]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => Math.abs(ctx.raw) + ' mins ' + (ctx.raw >= 0 ? 'Early' : 'Late') } } },
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: (ctx) => Math.abs(ctx.raw) + ' mins ' + (ctx.raw >= 0 ? 'Early' : 'Late') } }
+                    },
                     scales: {
                         y: { display: true, title: { display: true, text: 'Minutes', font: { size: 10 } }, ticks: { font: { size: 10 } }, border: { display: false }, grid: { borderDash: [4, 4] } },
                         x: { grid: { display: false }, ticks: { font: { size: 10 } } }
@@ -305,14 +223,14 @@
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-slate-100 hover:bg-slate-50 transition-colors text-[11px]";
                 tr.innerHTML = `
-                    <td class="px-2 py-3 font-bold text-slate-700 whitespace-nowrap">${row.Date}</td>
-                    <td class="px-2 py-3">${formatTimeDisplay(row['Leave Home'])}</td>
+                    <td class="px-2 py-3 font-bold text-slate-700 whitespace-nowrap">${formatDisplayDate(row.Date)}</td>
+                    <td class="px-2 py-3">${formatTime(row['Leave Home'])}</td>
                     <td class="px-2 py-3 font-medium text-slate-400 italic">${c.morning ? c.morning + 'm' : '--'}</td>
-                    <td class="px-2 py-3 text-emerald-600 font-bold">${formatTimeDisplay(row['Arrive Office'])}</td>
+                    <td class="px-2 py-3 text-emerald-600 font-bold">${formatTime(row['Arrive Office'])}</td>
                     <td class="px-2 py-3 font-bold text-indigo-600">${row['Office Hours'] || '--'}</td>
-                    <td class="px-2 py-3 text-rose-600 font-bold">${formatTimeDisplay(row['Leave Office'])}</td>
+                    <td class="px-2 py-3 text-rose-600 font-bold">${formatTime(row['Leave Office'])}</td>
                     <td class="px-2 py-3 font-medium text-slate-400 italic">${c.evening ? c.evening + 'm' : '--'}</td>
-                    <td class="px-2 py-3">${formatTimeDisplay(row['Arrive Home'])}</td>
+                    <td class="px-2 py-3">${formatTime(row['Arrive Home'])}</td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -322,7 +240,7 @@
     </script>
 
     <div id="loading" class="text-center py-20 text-slate-500 font-bold animate-pulse text-sm">
-        <i class="fa fa-circle-notch fa-spin mr-2 text-indigo-500"></i> Fetching Live Data...
+        Fetching Dashboard Data...
     </div>
 
     <div id="dashboard" class="hidden space-y-4">
@@ -333,79 +251,69 @@
                 <h1 class="text-xl font-black text-slate-800 tracking-tight leading-tight">Travel & Work <br>Insights</h1>
                 <p class="text-slate-500 text-[9px] font-bold uppercase tracking-wider mt-1">Real-time Animation Dashboard</p>
             </div>
-            <div class="flex flex-col items-end gap-2">
-                <button onclick="init()" class="bg-slate-50 hover:bg-slate-100 text-slate-600 p-2 rounded-full transition-colors border border-slate-200">
-                    <i class="fa fa-rotate-right text-xs"></i>
-                </button>
-                <select id="rangeSelect" onchange="updateDashboard()" class="bg-slate-50 border border-slate-200 text-slate-700 text-[10px] font-bold py-1 px-2 rounded focus:outline-none">
-                    <option value="currentMonth" selected>Current Month</option>
-                    <option value="lastMonth">Last Month</option>
-                    <option value="all">All Time</option>
-                </select>
-            </div>
+            <button onclick="init()" class="bg-slate-50 hover:bg-slate-100 text-slate-600 p-3 rounded-full transition-colors border border-slate-200">
+                <i class="fa fa-rotate-right text-sm"></i>
+            </button>
         </div>
 
         <!-- Today's Visual Timeline -->
-        <div class="glass-card overflow-hidden">
+        <div class="glass-card">
             <h2 class="text-sm font-bold text-slate-800 mb-6"><i class="fa-solid fa-route text-sky-400 mr-2"></i> Real-Time Journey</h2>
             
-            <div class="overflow-x-auto hide-scrollbar -mx-2 px-2">
-                <div class="flex items-start justify-between w-full min-w-[320px] max-w-2xl mx-auto mb-2">
-                    
-                    <!-- Node 1: Home -->
-                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
-                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
-                        <div class="w-8 h-px bg-slate-200 my-1"></div>
-                        <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
-                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-home">--:--</p>
-                    </div>
+            <div class="flex w-full relative items-start">
+                
+                <!-- Node 1: Home -->
+                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
+                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
+                    <div class="w-8 h-px bg-slate-200 my-1"></div>
+                    <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
+                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-home">--:--</p>
+                </div>
 
-                    <!-- Segment 1: perfectly aligned to top-[20px] -->
-                    <div class="flex-1 relative mx-[-12px] z-0">
-                        <div class="absolute w-full top-[20px] transform -translate-y-1/2 h-1 bg-slate-200"></div>
-                        <div id="bar-1" class="absolute top-[20px] transform -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
-                    </div>
+                <!-- Segment 1 -->
+                <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
+                    <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
+                    <div id="bar-1" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
+                </div>
 
-                    <!-- Node 2: Office Arrive -->
-                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building"></i></div>
-                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
-                        <div class="w-8 h-px bg-slate-200 my-1"></div>
-                        <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
-                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-office">--:--</p>
-                    </div>
+                <!-- Node 2: Office Arrive -->
+                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building"></i></div>
+                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
+                    <div class="w-8 h-px bg-slate-200 my-1"></div>
+                    <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
+                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-office">--:--</p>
+                </div>
 
-                    <!-- Segment 2 -->
-                    <div class="flex-1 relative mx-[-12px] z-0">
-                        <div class="absolute w-full top-[20px] transform -translate-y-1/2 h-1 bg-slate-200"></div>
-                        <div id="bar-2" class="absolute top-[20px] transform -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
-                    </div>
+                <!-- Segment 2 -->
+                <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
+                    <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
+                    <div id="bar-2" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
+                </div>
 
-                    <!-- Node 3: Office Leave -->
-                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building-user"></i></div>
-                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
-                        <div class="w-8 h-px bg-slate-200 my-1"></div>
-                        <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
-                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-office">--:--</p>
-                    </div>
+                <!-- Node 3: Office Leave -->
+                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building-user"></i></div>
+                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
+                    <div class="w-8 h-px bg-slate-200 my-1"></div>
+                    <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
+                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-office">--:--</p>
+                </div>
 
-                    <!-- Segment 3 -->
-                    <div class="flex-1 relative mx-[-12px] z-0">
-                        <div class="absolute w-full top-[20px] transform -translate-y-1/2 h-1 bg-slate-200"></div>
-                        <div id="bar-3" class="absolute top-[20px] transform -translate-y-1/2 h-1 bg-sky-400 transition-all duration-1000" style="width: 0%;"></div>
-                    </div>
+                <!-- Segment 3 -->
+                <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
+                    <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
+                    <div id="bar-3" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
+                </div>
 
-                    <!-- Node 4: Home Arrive -->
-                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
-                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
-                        <div class="w-8 h-px bg-slate-200 my-1"></div>
-                        <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
-                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-home">--:--</p>
-                    </div>
-
+                <!-- Node 4: Home Arrive -->
+                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
+                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
+                    <div class="w-8 h-px bg-slate-200 my-1"></div>
+                    <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
+                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-home">--:--</p>
                 </div>
             </div>
         </div>
@@ -416,42 +324,38 @@
             
             <div class="grid grid-cols-2 gap-y-6 border-t border-slate-100 pt-5 relative">
                 
-                <!-- Q1: Travel Time -->
                 <div class="text-center border-r border-slate-100 pr-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Travel Time</p>
                     <p class="text-[10px] text-slate-500 mb-1">Home to office</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-m-travel">--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-m-time">--</p>
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">Office to Home</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-e-travel">--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-e-time">--</p>
                 </div>
 
-                <!-- Q2: Morning Commute -->
                 <div class="text-center pl-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Morning Commute</p>
                     <p class="text-[10px] text-slate-500 mb-1">Leave Home at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-leave-h">--:--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-leave-home">--:--</p>
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrive Office at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-arrive-o">--:--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-office">--:--</p>
                 </div>
 
                 <div class="col-span-2 border-b border-slate-100 my-[-8px]"></div>
 
-                <!-- Q3: Evening Commute -->
                 <div class="text-center border-r border-slate-100 pr-2 pt-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Evening Commute</p>
                     <p class="text-[10px] text-slate-500 mb-1">Office Leave at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-leave-o">--:--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-leave-office">--:--</p>
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrived home at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-arrive-h">--:--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-home">--:--</p>
                 </div>
 
-                <!-- Q4: Work Details -->
                 <div class="text-center pl-2 pt-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Work Details</p>
                     <p class="text-[10px] text-slate-500 mb-1">todays work hour</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-work-hr">--:--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-work-hour">--:--</p>
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">average work hour</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="tdy-avg-work">--:--</p>
+                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-avg-work">--:--</p>
                 </div>
 
             </div>
