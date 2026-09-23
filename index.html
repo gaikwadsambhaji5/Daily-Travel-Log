@@ -17,14 +17,6 @@
     <script>
         // --- CONFIGURATION ---
         const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyevrcmR88aEx0RfXa2tO8AL6t0DV4MbVlFA-QWyMwG80YN4V7yam4dQgYlLQidgcXV/exec"; 
-        
-        // Ensure these match EXACTLY what your iPhone shortcut sends to the Google Sheet
-        const EVENTS = {
-            leaveHome: "Leave Home",
-            arriveOffice: "Arrive Office",
-            leaveOffice: "Leave Office",
-            arriveHome: "Arrive Home"
-        };
         // ---------------------
 
         let sheetData = [];
@@ -41,90 +33,114 @@
             }
         }
 
+        // Helper to convert "09:09" or "08:36:00" to total minutes for math
+        function timeToMinutes(timeVal) {
+            if (!timeVal) return null;
+            let str = String(timeVal);
+            if (str.includes('T')) { // Handles raw date objects from sheets
+                let d = new Date(str);
+                return d.getHours() * 60 + d.getMinutes();
+            }
+            let parts = str.split(':');
+            if (parts.length >= 2) {
+                return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+            }
+            return null;
+        }
+
+        // Helper to format date strings like "12/09/2026"
+        function formatDateLabel(dateVal) {
+            if (!dateVal) return "";
+            let str = String(dateVal);
+            let d = str.includes('/') ? new Date(str.split('/')[2], str.split('/')[1] - 1, str.split('/')[0]) : new Date(str);
+            return d.toLocaleDateString([], {weekday: 'short'});
+        }
+
         function processDashboardData() {
             document.getElementById('loading').classList.add('hidden');
             document.getElementById('dashboard').classList.remove('hidden');
 
-            const today = new Date().toDateString();
-            let morningCommute = 0;
-            let eveningCommute = 0;
-            let officeTime = 0;
-            
             let timelineHTML = "";
             let chartLabels = [];
             let morningData = [];
             let eveningData = [];
+            let morningCommute = 0;
+            let eveningCommute = 0;
             
-            // Group data by date
-            const groupedByDate = {};
+            // Filter out fully empty rows and grab the last 7 days
+            const validData = sheetData.filter(row => row.Date && row.Date.trim() !== "");
+            const recentData = validData.slice(-7);
             
-            sheetData.forEach(row => {
-                // Assumes columns are named "Timestamp" and "Event"
-                const dateObj = new Date(row.Timestamp);
-                const dateStr = dateObj.toDateString();
-                const timeStr = dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                
-                if (!groupedByDate[dateStr]) groupedByDate[dateStr] = {};
-                groupedByDate[dateStr][row.Event] = dateObj;
+            // Build Chart Data
+            recentData.forEach(row => {
+                chartLabels.push(formatDateLabel(row.Date));
 
-                // Build Today's Timeline
-                if (dateStr === today) {
-                    let icon = "fa-clock";
-                    if (row.Event === EVENTS.leaveHome) icon = "fa-house-person-leave text-blue-500";
-                    if (row.Event === EVENTS.arriveOffice) icon = "fa-building text-green-500";
-                    if (row.Event === EVENTS.leaveOffice) icon = "fa-building-user text-orange-500";
-                    if (row.Event === EVENTS.arriveHome) icon = "fa-house text-purple-500";
+                let mCommute = 0;
+                let eCommute = 0;
 
-                    timelineHTML += `
+                let tLeaveHome = timeToMinutes(row['Leave Home']);
+                let tArriveOffice = timeToMinutes(row['Arrive Office']);
+                let tLeaveOffice = timeToMinutes(row['Leave Office']);
+                let tArriveHome = timeToMinutes(row['Arrive Home']);
+
+                if (tLeaveHome !== null && tArriveOffice !== null) mCommute = tArriveOffice - tLeaveHome;
+                if (tLeaveOffice !== null && tArriveHome !== null) eCommute = tArriveHome - tLeaveOffice;
+
+                morningData.push(mCommute > 0 ? mCommute : 0);
+                eveningData.push(eCommute > 0 ? eCommute : 0);
+            });
+
+            // Build Today's Data (using the absolute last row in the sheet)
+            const todayRow = validData[validData.length - 1];
+
+            if (todayRow) {
+                let tLeaveHome = timeToMinutes(todayRow['Leave Home']);
+                let tArriveOffice = timeToMinutes(todayRow['Arrive Office']);
+                let tLeaveOffice = timeToMinutes(todayRow['Leave Office']);
+                let tArriveHome = timeToMinutes(todayRow['Arrive Home']);
+
+                if (tLeaveHome !== null && tArriveOffice !== null) morningCommute = tArriveOffice - tLeaveHome;
+                if (tLeaveOffice !== null && tArriveHome !== null) eveningCommute = tArriveHome - tLeaveOffice;
+
+                // Update Stats Cards
+                document.getElementById('morning-time').innerText = morningCommute > 0 ? morningCommute + " min" : "--";
+                document.getElementById('evening-time').innerText = eveningCommute > 0 ? eveningCommute + " min" : "--";
+                document.getElementById('office-time').innerText = todayRow['Office Hours'] || "--";
+                document.getElementById('status-text').innerText = todayRow['Status'] || "In Progress";
+
+                // Build Timeline
+                function createTimelineItem(iconClass, time, text) {
+                    if (!time) return "";
+                    // format time to strip seconds if they exist (e.g., 08:36:00 -> 08:36)
+                    let displayTime = String(time).split(':').slice(0,2).join(':');
+                    if (String(time).includes('T')) displayTime = new Date(time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                    
+                    return `
                         <div class="flex items-center mb-4">
-                            <div class="bg-white p-3 rounded-full shadow-sm mr-4"><i class="fa-solid ${icon} text-xl"></i></div>
+                            <div class="bg-white p-3 rounded-full shadow-sm mr-4 w-12 h-12 flex items-center justify-center"><i class="fa-solid ${iconClass} text-xl"></i></div>
                             <div>
-                                <p class="text-sm text-slate-500">${timeStr}</p>
-                                <p class="font-bold">${row.Event}</p>
+                                <p class="text-sm text-slate-500">${displayTime}</p>
+                                <p class="font-bold">${text}</p>
                             </div>
                         </div>
                     `;
                 }
-            });
 
-            document.getElementById('timeline').innerHTML = timelineHTML || "<p class='text-slate-500'>No activity logged today yet.</p>";
-
-            // Calculate metrics for the last 7 days for the chart
-            const dates = Object.keys(groupedByDate).sort((a, b) => new Date(a) - new Date(b)).slice(-7);
-            
-            dates.forEach(d => {
-                const dayEvents = groupedByDate[d];
-                let mCommute = 0;
-                let eCommute = 0;
-
-                if (dayEvents[EVENTS.leaveHome] && dayEvents[EVENTS.arriveOffice]) {
-                    mCommute = (dayEvents[EVENTS.arriveOffice] - dayEvents[EVENTS.leaveHome]) / 60000; // in minutes
-                }
-                if (dayEvents[EVENTS.leaveOffice] && dayEvents[EVENTS.arriveHome]) {
-                    eCommute = (dayEvents[EVENTS.arriveHome] - dayEvents[EVENTS.leaveOffice]) / 60000;
-                }
-                if (dayEvents[EVENTS.arriveOffice] && dayEvents[EVENTS.leaveOffice] && d === today) {
-                    officeTime = (dayEvents[EVENTS.leaveOffice] - dayEvents[EVENTS.arriveOffice]) / 3600000; // in hours
-                }
-
-                chartLabels.push(new Date(d).toLocaleDateString([], {weekday: 'short'}));
-                morningData.push(mCommute);
-                eveningData.push(eCommute);
-
-                if (d === today) {
-                    morningCommute = mCommute;
-                    eveningCommute = eCommute;
-                }
-            });
-
-            // Update Today's Stats Cards
-            document.getElementById('morning-time').innerText = morningCommute > 0 ? Math.round(morningCommute) + " min" : "--";
-            document.getElementById('evening-time').innerText = eveningCommute > 0 ? Math.round(eveningCommute) + " min" : "--";
-            document.getElementById('office-time').innerText = officeTime > 0 ? officeTime.toFixed(1) + " hrs" : "--";
+                if (todayRow['Leave Home']) timelineHTML += createTimelineItem("fa-house-person-leave text-blue-500", todayRow['Leave Home'], "Left Home");
+                if (todayRow['Arrive Office']) timelineHTML += createTimelineItem("fa-building text-green-500", todayRow['Arrive Office'], "Arrived at Office");
+                if (todayRow['Leave Office']) timelineHTML += createTimelineItem("fa-building-user text-orange-500", todayRow['Leave Office'], "Left Office");
+                if (todayRow['Arrive Home']) timelineHTML += createTimelineItem("fa-house text-purple-500", todayRow['Arrive Home'], "Arrived Home");
+                
+                document.getElementById('timeline').innerHTML = timelineHTML || "<p class='text-slate-500'>No activity logged yet today.</p>";
+            }
 
             // Render Chart
             const ctx = document.getElementById('commuteChart').getContext('2d');
-            new Chart(ctx, {
+            
+            // Destroy existing chart if refreshing
+            if(window.commuteChartObj) window.commuteChartObj.destroy();
+
+            window.commuteChartObj = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: chartLabels,
@@ -169,15 +185,21 @@
                     <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">To Home</p>
                     <p class="text-2xl font-extrabold text-purple-600" id="evening-time">--</p>
                 </div>
-                <div class="glass-card p-4 rounded-2xl shadow-sm border border-slate-100 col-span-2">
-                    <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Total Time at Office</p>
-                    <p class="text-2xl font-extrabold text-slate-700" id="office-time">--</p>
+                <div class="glass-card p-4 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center col-span-2">
+                    <div>
+                        <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Total Time at Office</p>
+                        <p class="text-2xl font-extrabold text-slate-700" id="office-time">--</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Status</p>
+                        <p class="text-sm font-bold text-emerald-600 bg-emerald-100 px-3 py-1 rounded-full" id="status-text">--</p>
+                    </div>
                 </div>
             </div>
 
             <!-- Today's Timeline -->
             <div class="glass-card p-5 rounded-2xl shadow-sm border border-slate-100">
-                <h2 class="font-bold text-lg mb-4">Today's Logs</h2>
+                <h2 class="font-bold text-lg mb-4">Latest Logs</h2>
                 <div id="timeline" class="border-l-2 border-slate-200 ml-4 pl-4">
                     <!-- Timeline items injected via JS -->
                 </div>
@@ -185,7 +207,7 @@
 
             <!-- Chart -->
             <div class="glass-card p-5 rounded-2xl shadow-sm border border-slate-100 h-64">
-                <h2 class="font-bold text-lg mb-2">Last 7 Days</h2>
+                <h2 class="font-bold text-lg mb-2">Recent Commutes</h2>
                 <canvas id="commuteChart"></canvas>
             </div>
             
