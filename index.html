@@ -16,17 +16,24 @@
         @media (max-width: 767px) {
             .mobile-border-b { border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 0.5rem; }
             .mobile-no-border-r { border-right: none; }
+            .glass-card { padding: 1rem; } /* Reduce padding slightly on mobile */
         }
 
         /* Timeline Specific Styles */
-        .tl-node { width: 3.5rem; height: 3.5rem; border-radius: 9999px; display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 10; position: relative; transition: all 0.3s ease;}
+        .tl-node { width: 2.75rem; height: 2.75rem; border-radius: 9999px; display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 10; position: relative; transition: all 0.3s ease;}
+        @media (min-width: 640px) { .tl-node { width: 3.5rem; height: 3.5rem; } }
         .tl-active { background-color: #38bdf8; color: white; }
         .tl-inactive { background-color: #e2e8f0; color: #64748b; }
-        .tl-line-container { flex-grow: 1; height: 6px; background-color: #e2e8f0; position: relative; margin: 0 -0.5rem; z-index: 0; border-radius: 3px; overflow: hidden; }
+        .tl-line-container { flex-grow: 1; height: 6px; background-color: #e2e8f0; position: relative; margin: 0 -0.25rem; z-index: 0; border-radius: 3px; overflow: hidden; }
+        @media (min-width: 640px) { .tl-line-container { margin: 0 -0.5rem; } }
         .tl-progress { height: 100%; background-color: #38bdf8; position: absolute; top: 0; left: 0; transition: width 1s linear; border-radius: 3px;}
+        
+        /* Hide Scrollbar for timeline */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="p-4 md:p-8 max-w-6xl mx-auto pb-16">
+<body class="p-3 md:p-8 max-w-6xl mx-auto pb-16">
 
     <script>
         // --- CONFIGURATION ---
@@ -414,70 +421,72 @@
 
         <!-- NEW VISUAL TIMELINE -->
         <div class="glass-card overflow-hidden">
-            <h2 class="text-xl font-extrabold text-slate-800 mb-8 flex items-center">
+            <h2 class="text-xl font-extrabold text-slate-800 mb-6 flex items-center">
                 <i class="fa-solid fa-route text-sky-500 mr-2"></i> Real-Time Journey
             </h2>
             
-            <div class="flex items-center justify-between w-full max-w-4xl mx-auto px-4 sm:px-8 mb-6">
-                
-                <!-- Node 1: Home -->
-                <div class="flex flex-col items-center">
-                    <p class="text-sm font-bold text-slate-800 mb-2">Home</p>
-                    <div id="tl-node-1" class="tl-node tl-inactive text-sm font-bold shadow-md">
-                        <i class="fa fa-house mb-0.5"></i>
+            <div class="overflow-x-auto hide-scrollbar -mx-2 px-2">
+                <div class="flex items-center justify-between w-full min-w-[340px] max-w-4xl mx-auto px-1 sm:px-8 mb-4">
+                    
+                    <!-- Node 1: Home -->
+                    <div class="flex flex-col items-center w-16 sm:w-24">
+                        <p class="text-[10px] sm:text-sm font-bold text-slate-800 mb-1 sm:mb-2">Home</p>
+                        <div id="tl-node-1" class="tl-node tl-inactive text-xs sm:text-sm font-bold shadow-md">
+                            <i class="fa fa-house mb-0.5"></i>
+                        </div>
+                        <p class="text-[8px] sm:text-[10px] font-bold text-red-500 mt-2 uppercase tracking-wide">Leave At</p>
+                        <p class="text-xs sm:text-lg font-black text-slate-800 tracking-tight" id="tl-time-1">--:--</p>
                     </div>
-                    <p class="text-[10px] font-bold text-red-500 mt-2 uppercase tracking-wide">Leave At</p>
-                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-1">--:--</p>
-                </div>
 
-                <!-- Segment 1 -->
-                <div class="tl-line-container relative">
-                    <div id="seg-text-1" class="absolute -top-6 left-0 w-full text-center text-[11px] sm:text-xs font-bold text-slate-500 italic"></div>
-                    <div id="seg-prog-1" class="tl-progress" style="width: 0%;"></div>
-                </div>
-
-                <!-- Node 2: Office Arrive -->
-                <div class="flex flex-col items-center">
-                    <p class="text-sm font-bold text-slate-800 mb-2">Office</p>
-                    <div id="tl-node-2" class="tl-node tl-inactive text-sm font-bold shadow-md">
-                        <i class="fa fa-building mb-0.5"></i>
+                    <!-- Segment 1 -->
+                    <div class="tl-line-container relative">
+                        <div id="seg-text-1" class="absolute -top-5 sm:-top-6 left-0 w-full text-center text-[9px] sm:text-xs font-bold text-slate-500 italic"></div>
+                        <div id="seg-prog-1" class="tl-progress" style="width: 0%;"></div>
                     </div>
-                    <p class="text-[10px] font-bold text-green-500 mt-2 uppercase tracking-wide">Arrive At</p>
-                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-2">--:--</p>
-                </div>
 
-                <!-- Segment 2 -->
-                <div class="tl-line-container relative">
-                    <div id="seg-text-2" class="absolute -top-6 left-0 w-full text-center text-[11px] sm:text-xs font-bold text-slate-500 italic"></div>
-                    <div id="seg-prog-2" class="tl-progress" style="width: 0%;"></div>
-                </div>
-
-                <!-- Node 3: Office Leave -->
-                <div class="flex flex-col items-center">
-                    <p class="text-sm font-bold text-slate-800 mb-2">Office</p>
-                    <div id="tl-node-3" class="tl-node tl-inactive text-sm font-bold shadow-md">
-                        <i class="fa fa-person-walking-arrow-right mb-0.5"></i>
+                    <!-- Node 2: Office Arrive -->
+                    <div class="flex flex-col items-center w-16 sm:w-24">
+                        <p class="text-[10px] sm:text-sm font-bold text-slate-800 mb-1 sm:mb-2">Office</p>
+                        <div id="tl-node-2" class="tl-node tl-inactive text-xs sm:text-sm font-bold shadow-md">
+                            <i class="fa fa-building mb-0.5"></i>
+                        </div>
+                        <p class="text-[8px] sm:text-[10px] font-bold text-green-500 mt-2 uppercase tracking-wide">Arrive At</p>
+                        <p class="text-xs sm:text-lg font-black text-slate-800 tracking-tight" id="tl-time-2">--:--</p>
                     </div>
-                    <p class="text-[10px] font-bold text-red-500 mt-2 uppercase tracking-wide">Leave At</p>
-                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-3">--:--</p>
-                </div>
 
-                <!-- Segment 3 -->
-                <div class="tl-line-container relative">
-                    <div id="seg-text-3" class="absolute -top-6 left-0 w-full text-center text-[11px] sm:text-xs font-bold text-slate-500 italic"></div>
-                    <div id="seg-prog-3" class="tl-progress" style="width: 0%;"></div>
-                </div>
-
-                <!-- Node 4: Home Arrive -->
-                <div class="flex flex-col items-center">
-                    <p class="text-sm font-bold text-slate-800 mb-2">Home</p>
-                    <div id="tl-node-4" class="tl-node tl-inactive text-sm font-bold shadow-md">
-                        <i class="fa fa-check mb-0.5"></i>
+                    <!-- Segment 2 -->
+                    <div class="tl-line-container relative">
+                        <div id="seg-text-2" class="absolute -top-5 sm:-top-6 left-0 w-full text-center text-[9px] sm:text-xs font-bold text-slate-500 italic"></div>
+                        <div id="seg-prog-2" class="tl-progress" style="width: 0%;"></div>
                     </div>
-                    <p class="text-[10px] font-bold text-green-500 mt-2 uppercase tracking-wide">Arrive At</p>
-                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-4">--:--</p>
-                </div>
 
+                    <!-- Node 3: Office Leave -->
+                    <div class="flex flex-col items-center w-16 sm:w-24">
+                        <p class="text-[10px] sm:text-sm font-bold text-slate-800 mb-1 sm:mb-2">Office</p>
+                        <div id="tl-node-3" class="tl-node tl-inactive text-xs sm:text-sm font-bold shadow-md">
+                            <i class="fa fa-person-walking-arrow-right mb-0.5"></i>
+                        </div>
+                        <p class="text-[8px] sm:text-[10px] font-bold text-red-500 mt-2 uppercase tracking-wide">Leave At</p>
+                        <p class="text-xs sm:text-lg font-black text-slate-800 tracking-tight" id="tl-time-3">--:--</p>
+                    </div>
+
+                    <!-- Segment 3 -->
+                    <div class="tl-line-container relative">
+                        <div id="seg-text-3" class="absolute -top-5 sm:-top-6 left-0 w-full text-center text-[9px] sm:text-xs font-bold text-slate-500 italic"></div>
+                        <div id="seg-prog-3" class="tl-progress" style="width: 0%;"></div>
+                    </div>
+
+                    <!-- Node 4: Home Arrive -->
+                    <div class="flex flex-col items-center w-16 sm:w-24">
+                        <p class="text-[10px] sm:text-sm font-bold text-slate-800 mb-1 sm:mb-2">Home</p>
+                        <div id="tl-node-4" class="tl-node tl-inactive text-xs sm:text-sm font-bold shadow-md">
+                            <i class="fa fa-check mb-0.5"></i>
+                        </div>
+                        <p class="text-[8px] sm:text-[10px] font-bold text-green-500 mt-2 uppercase tracking-wide">Arrive At</p>
+                        <p class="text-xs sm:text-lg font-black text-slate-800 tracking-tight" id="tl-time-4">--:--</p>
+                    </div>
+
+                </div>
             </div>
         </div>
 
@@ -488,40 +497,40 @@
             </h2>
             
             <div class="grid grid-cols-2 md:grid-cols-4 text-center">
-                <div class="col-divider mobile-border-b md:px-2 flex flex-col justify-center">
-                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Travel Time</p>
-                    <p class="text-xs text-slate-500 font-medium">Home to office</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-m-travel">--</p>
-                    <div class="h-4"></div>
-                    <p class="text-xs text-slate-500 font-medium">Office to Home</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-e-travel">--</p>
+                <div class="col-divider mobile-border-b px-1 md:px-2 flex flex-col justify-center">
+                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Travel Time</p>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Home to office</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-m-travel">--</p>
+                    <div class="h-3 sm:h-4"></div>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Office to Home</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-e-travel">--</p>
                 </div>
 
-                <div class="col-divider mobile-border-b mobile-no-border-r md:px-2 flex flex-col justify-center">
-                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Morning Commute</p>
-                    <p class="text-xs text-slate-500 font-medium">Leave Home at</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-h">--:--</p>
-                    <div class="h-4"></div>
-                    <p class="text-xs text-slate-500 font-medium">Arrive Office at</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-o">--:--</p>
+                <div class="col-divider mobile-border-b mobile-no-border-r px-1 md:px-2 flex flex-col justify-center">
+                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Morning Commute</p>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Leave Home at</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-h">--:--</p>
+                    <div class="h-3 sm:h-4"></div>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Arrive Office at</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-o">--:--</p>
                 </div>
 
-                <div class="col-divider md:px-2 flex flex-col justify-center pt-2 md:pt-0">
-                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Evening Commute</p>
-                    <p class="text-xs text-slate-500 font-medium">Office Leave at</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-o">--:--</p>
-                    <div class="h-4"></div>
-                    <p class="text-xs text-slate-500 font-medium">Arrived home at</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-h">--:--</p>
+                <div class="col-divider px-1 md:px-2 flex flex-col justify-center pt-2 md:pt-0">
+                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Evening Commute</p>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Office Leave at</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-o">--:--</p>
+                    <div class="h-3 sm:h-4"></div>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">Arrived home at</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-h">--:--</p>
                 </div>
 
-                <div class="md:px-2 flex flex-col justify-center pt-2 md:pt-0">
-                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Work Details</p>
-                    <p class="text-xs text-slate-500 font-medium">todays work hour</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-work-hr">--:--</p>
-                    <div class="h-4"></div>
-                    <p class="text-xs text-slate-500 font-medium">average work hour</p>
-                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-avg-work">--:--</p>
+                <div class="px-1 md:px-2 flex flex-col justify-center pt-2 md:pt-0">
+                    <p class="text-[11px] sm:text-sm font-bold text-rose-500 uppercase tracking-wide mb-2 sm:mb-3">Work Details</p>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">todays work hour</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-work-hr">--:--</p>
+                    <div class="h-3 sm:h-4"></div>
+                    <p class="text-[10px] sm:text-xs text-slate-500 font-medium">average work hour</p>
+                    <p class="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight" id="tdy-avg-work">--:--</p>
                 </div>
             </div>
         </div>
