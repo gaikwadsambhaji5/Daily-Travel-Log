@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Commute Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+        .glass-card { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans antialiased p-4 pb-12">
+
+    <script>
+        // --- CONFIGURATION ---
+        const WEB_APP_URL = "YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL"; 
+        
+        // Ensure these match EXACTLY what your iPhone shortcut sends to the Google Sheet
+        const EVENTS = {
+            leaveHome: "Leave Home",
+            arriveOffice: "Arrive Office",
+            leaveOffice: "Leave Office",
+            arriveHome: "Arrive Home"
+        };
+        // ---------------------
+
+        let sheetData = [];
+
+        async function fetchCommuteData() {
+            document.getElementById('loading').classList.remove('hidden');
+            try {
+                const response = await fetch(WEB_APP_URL);
+                sheetData = await response.json();
+                processDashboardData();
+            } catch (error) {
+                console.error("Error fetching data:", error);
+                document.getElementById('loading').innerText = "Error loading data. Check URL and Apps Script permissions.";
+            }
+        }
+
+        function processDashboardData() {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+
+            const today = new Date().toDateString();
+            let morningCommute = 0;
+            let eveningCommute = 0;
+            let officeTime = 0;
+            
+            let timelineHTML = "";
+            let chartLabels = [];
+            let morningData = [];
+            let eveningData = [];
+            
+            // Group data by date
+            const groupedByDate = {};
+            
+            sheetData.forEach(row => {
+                // Assumes columns are named "Timestamp" and "Event"
+                const dateObj = new Date(row.Timestamp);
+                const dateStr = dateObj.toDateString();
+                const timeStr = dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                
+                if (!groupedByDate[dateStr]) groupedByDate[dateStr] = {};
+                groupedByDate[dateStr][row.Event] = dateObj;
+
+                // Build Today's Timeline
+                if (dateStr === today) {
+                    let icon = "fa-clock";
+                    if (row.Event === EVENTS.leaveHome) icon = "fa-house-person-leave text-blue-500";
+                    if (row.Event === EVENTS.arriveOffice) icon = "fa-building text-green-500";
+                    if (row.Event === EVENTS.leaveOffice) icon = "fa-building-user text-orange-500";
+                    if (row.Event === EVENTS.arriveHome) icon = "fa-house text-purple-500";
+
+                    timelineHTML += `
+                        <div class="flex items-center mb-4">
+                            <div class="bg-white p-3 rounded-full shadow-sm mr-4"><i class="fa-solid ${icon} text-xl"></i></div>
+                            <div>
+                                <p class="text-sm text-slate-500">${timeStr}</p>
+                                <p class="font-bold">${row.Event}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+
+            document.getElementById('timeline').innerHTML = timelineHTML || "<p class='text-slate-500'>No activity logged today yet.</p>";
+
+            // Calculate metrics for the last 7 days for the chart
+            const dates = Object.keys(groupedByDate).sort((a, b) => new Date(a) - new Date(b)).slice(-7);
+            
+            dates.forEach(d => {
+                const dayEvents = groupedByDate[d];
+                let mCommute = 0;
+                let eCommute = 0;
+
+                if (dayEvents[EVENTS.leaveHome] && dayEvents[EVENTS.arriveOffice]) {
+                    mCommute = (dayEvents[EVENTS.arriveOffice] - dayEvents[EVENTS.leaveHome]) / 60000; // in minutes
+                }
+                if (dayEvents[EVENTS.leaveOffice] && dayEvents[EVENTS.arriveHome]) {
+                    eCommute = (dayEvents[EVENTS.arriveHome] - dayEvents[EVENTS.leaveOffice]) / 60000;
+                }
+                if (dayEvents[EVENTS.arriveOffice] && dayEvents[EVENTS.leaveOffice] && d === today) {
+                    officeTime = (dayEvents[EVENTS.leaveOffice] - dayEvents[EVENTS.arriveOffice]) / 3600000; // in hours
+                }
+
+                chartLabels.push(new Date(d).toLocaleDateString([], {weekday: 'short'}));
+                morningData.push(mCommute);
+                eveningData.push(eCommute);
+
+                if (d === today) {
+                    morningCommute = mCommute;
+                    eveningCommute = eCommute;
+                }
+            });
+
+            // Update Today's Stats Cards
+            document.getElementById('morning-time').innerText = morningCommute > 0 ? Math.round(morningCommute) + " min" : "--";
+            document.getElementById('evening-time').innerText = eveningCommute > 0 ? Math.round(eveningCommute) + " min" : "--";
+            document.getElementById('office-time').innerText = officeTime > 0 ? officeTime.toFixed(1) + " hrs" : "--";
+
+            // Render Chart
+            const ctx = document.getElementById('commuteChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: chartLabels,
+                    datasets: [
+                        { label: 'Morning (min)', data: morningData, backgroundColor: '#3b82f6', borderRadius: 4 },
+                        { label: 'Evening (min)', data: eveningData, backgroundColor: '#8b5cf6', borderRadius: 4 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom' } },
+                    scales: { y: { beginAtZero: true, grid: { display: false } } }
+                }
+            });
+        }
+
+        window.onload = fetchCommuteData;
+    </script>
+
+    <!-- UI Layout -->
+    <div class="max-w-md mx-auto">
+        <header class="mb-6 mt-4">
+            <h1 class="text-2xl font-extrabold text-slate-800">Commute Tracker</h1>
+            <p class="text-slate-500" id="current-date"></p>
+            <script>document.getElementById('current-date').innerText = new Date().toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});</script>
+        </header>
+
+        <div id="loading" class="text-center py-10 text-blue-500 font-bold animate-pulse">
+            Fetching data from Google Sheets...
+        </div>
+
+        <div id="dashboard" class="hidden space-y-6">
+            
+            <!-- Quick Stats -->
+            <div class="grid grid-cols-2 gap-4">
+                <div class="glass-card p-4 rounded-2xl shadow-sm border border-slate-100">
+                    <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">To Office</p>
+                    <p class="text-2xl font-extrabold text-blue-600" id="morning-time">--</p>
+                </div>
+                <div class="glass-card p-4 rounded-2xl shadow-sm border border-slate-100">
+                    <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">To Home</p>
+                    <p class="text-2xl font-extrabold text-purple-600" id="evening-time">--</p>
+                </div>
+                <div class="glass-card p-4 rounded-2xl shadow-sm border border-slate-100 col-span-2">
+                    <p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Total Time at Office</p>
+                    <p class="text-2xl font-extrabold text-slate-700" id="office-time">--</p>
+                </div>
+            </div>
+
+            <!-- Today's Timeline -->
+            <div class="glass-card p-5 rounded-2xl shadow-sm border border-slate-100">
+                <h2 class="font-bold text-lg mb-4">Today's Logs</h2>
+                <div id="timeline" class="border-l-2 border-slate-200 ml-4 pl-4">
+                    <!-- Timeline items injected via JS -->
+                </div>
+            </div>
+
+            <!-- Chart -->
+            <div class="glass-card p-5 rounded-2xl shadow-sm border border-slate-100 h-64">
+                <h2 class="font-bold text-lg mb-2">Last 7 Days</h2>
+                <canvas id="commuteChart"></canvas>
+            </div>
+            
+            <button onclick="fetchCommuteData()" class="w-full bg-slate-800 text-white font-bold py-3 rounded-xl shadow-md active:bg-slate-700 transition-colors">
+                Refresh Data
+            </button>
+        </div>
+    </div>
+</body>
+</html>
