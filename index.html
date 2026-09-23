@@ -3,45 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Daily Travel Log</title>
+    <title>Professional Travel Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #ffffff; color: #000000; -webkit-tap-highlight-color: transparent; }
-        .red-title { color: #eb3449; } /* Matching your mockup red */
-        .divider { border-right: 1px solid #000; }
-        /* Remove divider on right side for mobile grid */
-        @media (max-width: 639px) { .mobile-no-divider { border-right: none; border-bottom: 1px solid #000; padding-bottom: 0.5rem; margin-bottom: 0.5rem; } }
+        body { font-family: 'Inter', -apple-system, sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
+        .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); border-radius: 1rem; padding: 1.25rem; }
+        .timeline-line { position: absolute; top: 1.25rem; left: 10%; right: 10%; height: 4px; background: #e2e8f0; z-index: 0; border-radius: 2px; }
+        .timeline-progress { position: absolute; top: 1.25rem; left: 10%; height: 4px; background: #6366f1; z-index: 1; border-radius: 2px; transition: width 0.5s ease; }
+        .node { position: relative; z-index: 2; display: flex; flex-direction: column; items-center; justify-content: center; width: 2.5rem; height: 2.5rem; border-radius: 9999px; font-size: 1rem; }
     </style>
 </head>
-<body class="p-4 pb-12 max-w-lg mx-auto">
+<body class="p-4 md:p-8 max-w-5xl mx-auto pb-16">
 
     <script>
         // --- CONFIGURATION ---
         const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyevrcmR88aEx0RfXa2tO8AL6t0DV4MbVlFA-QWyMwG80YN4V7yam4dQgYlLQidgcXV/exec"; 
         // ---------------------
 
-        Chart.register(ChartDataLabels);
         let globalData = [];
-        let weekChartObj = null;
+        let charts = {}; // Store chart instances to destroy on update
 
         async function init() {
-            document.getElementById('loading').classList.remove('hidden');
             try {
                 const response = await fetch(WEB_APP_URL);
                 globalData = await response.json();
                 document.getElementById('loading').classList.add('hidden');
                 document.getElementById('dashboard').classList.remove('hidden');
-                
                 updateDashboard();
             } catch (error) {
-                console.error("Error fetching data:", error);
-                document.getElementById('loading').innerText = "Error loading data. Check URL.";
+                document.getElementById('loading').innerHTML = `<span class="text-rose-500"><i class="fa fa-triangle-exclamation"></i> Error loading data. Check URL.</span>`;
             }
         }
 
-        // Parse DD/MM/YYYY string to Javascript Date object
         function parseDate(dateStr) {
             if (!dateStr) return null;
             const parts = dateStr.split('/');
@@ -49,302 +44,318 @@
             return new Date(dateStr);
         }
 
-        // Convert "10h 3m" or "9m" to total minutes
-        function parseDurationToMinutes(durStr) {
+        function parseDur(durStr) {
             if (!durStr) return 0;
             let mins = 0;
-            const hMatch = durStr.match(/(\d+)h/);
-            const mMatch = durStr.match(/(\d+)m/);
-            if (hMatch) mins += parseInt(hMatch[1]) * 60;
-            if (mMatch) mins += parseInt(mMatch[1]);
+            if (durStr.match(/(\d+)h/)) mins += parseInt(durStr.match(/(\d+)h/)[1]) * 60;
+            if (durStr.match(/(\d+)m/)) mins += parseInt(durStr.match(/(\d+)m/)[1]);
             return mins;
         }
 
-        // Format minutes back to "HH:MM"
-        function formatMinutesToHHMM(totalMins) {
+        function formatMins(totalMins) {
             if (!totalMins || isNaN(totalMins)) return "00:00";
-            const h = Math.floor(totalMins / 60);
-            const m = Math.floor(totalMins % 60);
-            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+            return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}h ${String(Math.floor(totalMins % 60)).padStart(2, '0')}m`;
         }
-        
+
         function formatTime(timeStr) {
             if (!timeStr) return "--:--";
             let str = String(timeStr).split(':').slice(0,2).join(':');
-            if (String(timeStr).includes('T')) str = new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
+            if (String(timeStr).includes('T')) {
+                str = new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: true});
+            }
             return str;
         }
 
-        function calculateMetrics(dataSubset) {
-            let totalWorkMins = 0;
-            let validWorkDays = 0;
-            let earlyDays = 0;
-            let lateDays = 0;
-
-            dataSubset.forEach(row => {
-                const workMins = parseDurationToMinutes(row['Office Hours']);
-                if (workMins > 0) {
-                    totalWorkMins += workMins;
-                    validWorkDays++;
-                }
-                if (row['Early'] && row['Early'].trim() !== "") earlyDays++;
-                if (row['Late'] && row['Late'].trim() !== "") lateDays++;
-            });
-
-            return {
-                daysWorked: validWorkDays,
-                avgWorkTime: validWorkDays > 0 ? formatMinutesToHHMM(totalWorkMins / validWorkDays) : "00:00",
-                earlyCount: earlyDays,
-                lateCount: lateDays
-            };
+        function getCommuteTimes(row) {
+            let m = 0, e = 0;
+            const th = parseDur(formatTime(row['Leave Home']).replace(':','h')+'m');
+            const to = parseDur(formatTime(row['Arrive Office']).replace(':','h')+'m');
+            const tl = parseDur(formatTime(row['Leave Office']).replace(':','h')+'m');
+            const ta = parseDur(formatTime(row['Arrive Home']).replace(':','h')+'m');
+            if(th && to) m = to - th;
+            if(tl && ta) e = ta - tl;
+            return { morning: m > 0 ? m : null, evening: e > 0 ? e : null };
         }
 
         function updateDashboard() {
-            const todayRow = globalData[globalData.length - 1];
-            
-            // --- POPULATE TODAY'S ACTIVITY ---
-            if (todayRow) {
-                // Calculate Travel Times
-                const tLeaveH = parseDurationToMinutes(formatTime(todayRow['Leave Home']).replace(':','h')+'m');
-                const tArriveO = parseDurationToMinutes(formatTime(todayRow['Arrive Office']).replace(':','h')+'m');
-                const tLeaveO = parseDurationToMinutes(formatTime(todayRow['Leave Office']).replace(':','h')+'m');
-                const tArriveH = parseDurationToMinutes(formatTime(todayRow['Arrive Home']).replace(':','h')+'m');
-                
-                let morningMins = (tArriveO > 0 && tLeaveH > 0) ? (tArriveO - tLeaveH) : 0;
-                let eveningMins = (tArriveH > 0 && tLeaveO > 0) ? (tArriveH - tLeaveO) : 0;
+            const range = document.getElementById('rangeSelect').value;
+            const now = new Date();
+            let filtered = globalData.filter(row => row.Date && row.Date.trim() !== "");
 
-                document.getElementById('tdy-m-commute').innerText = morningMins > 0 ? morningMins + " min" : "--";
-                document.getElementById('tdy-e-commute').innerText = eveningMins > 0 ? eveningMins + " min" : "--";
-
-                document.getElementById('tdy-leave-h').innerText = formatTime(todayRow['Leave Home']);
-                document.getElementById('tdy-arrive-o').innerText = formatTime(todayRow['Arrive Office']);
-                document.getElementById('tdy-leave-o').innerText = formatTime(todayRow['Leave Office']);
-                document.getElementById('tdy-arrive-h').innerText = formatTime(todayRow['Arrive Home']);
-                
-                document.getElementById('tdy-work-hr').innerText = todayRow['Office Hours'] ? todayRow['Office Hours'].replace('h ', ':').replace('m', '') : "--:--";
+            // Apply Date Filter
+            if (range === 'currentMonth') {
+                filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === now.getMonth() && parseDate(row.Date)?.getFullYear() === now.getFullYear());
+            } else if (range === 'lastMonth') {
+                let lm = now.getMonth() - 1; let y = now.getFullYear(); if (lm < 0) { lm = 11; y--; }
+                filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
             }
 
-            // --- POPULATE WEEK ACTIVITY CHART ---
-            // Get last 6 days for the chart
-            const chartData = globalData.slice(-6);
-            const labels = [];
-            const earlyLateData = [];
+            renderTodayTimeline(filtered);
+            renderMonFriChart(globalData); // Always calculate Mon-Fri based on current week
+            renderAdvancedMetrics(filtered);
+        }
 
-            chartData.forEach(row => {
-                const dateObj = parseDate(row.Date);
-                labels.push(dateObj ? dateObj.toLocaleDateString([], {weekday: 'short'}) : "");
-                
-                let val = 0;
-                if (row['Early']) val = parseDurationToMinutes(row['Early']);
-                if (row['Late']) val = -Math.abs(parseDurationToMinutes(row['Late']));
-                earlyLateData.push(val);
+        function renderTodayTimeline(data) {
+            const row = data[data.length - 1];
+            if (!row) return;
+
+            document.getElementById('tl-leave-home').innerText = formatTime(row['Leave Home']);
+            document.getElementById('tl-arrive-office').innerText = formatTime(row['Arrive Office']);
+            document.getElementById('tl-leave-office').innerText = formatTime(row['Leave Office']);
+            document.getElementById('tl-arrive-home').innerText = formatTime(row['Arrive Home']);
+
+            // Progress bar logic
+            let progress = "0%";
+            let activeNodes = 0;
+            if(row['Leave Home']) { progress = "0%"; activeNodes=1; }
+            if(row['Arrive Office']) { progress = "33%"; activeNodes=2; }
+            if(row['Leave Office']) { progress = "66%"; activeNodes=3; }
+            if(row['Arrive Home']) { progress = "100%"; activeNodes=4; }
+            
+            document.getElementById('timeline-progress-bar').style.width = progress;
+            
+            const nodes = document.querySelectorAll('.node');
+            nodes.forEach((node, idx) => {
+                if(idx < activeNodes) {
+                    node.classList.remove('bg-slate-200', 'text-slate-400');
+                    node.classList.add('bg-indigo-600', 'text-white', 'shadow-md');
+                } else {
+                    node.classList.remove('bg-indigo-600', 'text-white', 'shadow-md');
+                    node.classList.add('bg-slate-200', 'text-slate-400');
+                }
             });
+        }
 
-            const ctx = document.getElementById('weekChart').getContext('2d');
-            if(weekChartObj) weekChartObj.destroy();
+        function renderMonFriChart(allData) {
+            // Find current week's Monday to Friday based on latest entry
+            if(allData.length === 0) return;
+            const lastDate = parseDate(allData[allData.length-1].Date);
+            const dayOfWeek = lastDate.getDay(); 
+            const diff = lastDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+            const monday = new Date(lastDate.setDate(diff));
 
-            weekChartObj = new Chart(ctx, {
+            const dataPoints = [null, null, null, null, null];
+            
+            for(let i=0; i<5; i++) {
+                let target = new Date(monday);
+                target.setDate(monday.getDate() + i);
+                
+                let row = allData.find(r => parseDate(r.Date)?.toDateString() === target.toDateString());
+                if(row) {
+                    if (row['Early']) dataPoints[i] = parseDur(row['Early']);
+                    if (row['Late']) dataPoints[i] = -Math.abs(parseDur(row['Late']));
+                }
+            }
+
+            if(charts.week) charts.week.destroy();
+            charts.week = new Chart(document.getElementById('weekChart'), {
                 type: 'bar',
                 data: {
-                    labels: labels,
+                    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
                     datasets: [{
-                        data: earlyLateData,
-                        backgroundColor: '#000000',
-                        barPercentage: 0.6,
+                        data: dataPoints,
+                        backgroundColor: ctx => ctx.raw >= 0 ? '#10b981' : '#f43f5e',
+                        borderRadius: 4,
+                        barPercentage: 0.5
                     }]
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        datalabels: {
-                            color: '#94a3b8',
-                            font: { size: 10 },
-                            anchor: (context) => context.dataset.data[context.dataIndex] >= 0 ? 'end' : 'start',
-                            align: (context) => context.dataset.data[context.dataIndex] >= 0 ? 'top' : 'bottom',
-                            formatter: (value) => {
-                                if (value === 0) return "on time";
-                                return Math.abs(value) + " min " + (value > 0 ? "early" : "late");
-                            }
-                        }
-                    },
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
                     scales: {
-                        x: { grid: { color: '#000', lineWidth: 1 }, ticks: { color: '#000', font: { weight: 'bold' } }, border: { display: true, color: '#000' } },
-                        y: { display: false, min: Math.min(...earlyLateData, -30) - 15, max: Math.max(...earlyLateData, 30) + 15 } // Add padding for labels
+                        y: { display: true, title: { display: true, text: 'Minutes' } },
+                        x: { grid: { display: false } }
                     }
                 }
             });
-
-            // Trigger Range selection update
-            updateRangeSelection();
         }
 
-        function updateRangeSelection() {
-            const range = document.getElementById('rangeSelect').value;
-            const customDates = document.getElementById('customDates');
+        function renderAdvancedMetrics(data) {
+            let totalMCommute = 0, totalECommute = 0, mCount = 0, eCount = 0;
+            let early = 0, late = 0, ontime = 0;
+            let totalWorkMins = 0, daysWorked = 0;
+            let maxC = 0, minC = 999;
+            let statuses = { 'Complete': 0, 'Waiting': 0 };
             
-            if (range === 'custom') {
-                customDates.classList.remove('hidden');
-                // Don't calculate until custom dates are picked (handled by their own onchange)
-                return;
-            } else {
-                customDates.classList.add('hidden');
-            }
+            const hoursTrendData = [];
+            const hoursTrendLabels = [];
 
-            const now = new Date();
-            let filtered = [];
-            let title = "";
+            data.forEach(row => {
+                const c = getCommuteTimes(row);
+                if(c.morning) { totalMCommute += c.morning; mCount++; }
+                if(c.evening) { totalECommute += c.evening; eCount++; }
+                
+                const dayCommute = (c.morning||0) + (c.evening||0);
+                if(dayCommute > 0) {
+                    if(dayCommute > maxC) maxC = dayCommute;
+                    if(dayCommute < minC) minC = dayCommute;
+                }
 
-            if (range === 'currentMonth') {
-                filtered = globalData.filter(row => {
-                    const d = parseDate(row.Date);
-                    return d && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                });
-                title = "Current Month Overview";
-            } else if (range === 'lastMonth') {
-                let lastMonth = now.getMonth() - 1;
-                let year = now.getFullYear();
-                if (lastMonth < 0) { lastMonth = 11; year -= 1; }
-                filtered = globalData.filter(row => {
-                    const d = parseDate(row.Date);
-                    return d && d.getMonth() === lastMonth && d.getFullYear() === year;
-                });
-                title = "Last Month Overview";
-            } else if (range === 'all') {
-                filtered = globalData;
-                title = "All-Time Overview";
-            }
+                if (row['Early']) early++;
+                else if (row['Late']) late++;
+                else if (row['Arrive Office']) ontime++;
 
-            renderSummary(filtered, title);
-        }
+                const workMins = parseDur(row['Office Hours']);
+                if (workMins > 0) {
+                    totalWorkMins += workMins;
+                    daysWorked++;
+                    hoursTrendLabels.push(parseDate(row.Date).toLocaleDateString([], {month:'short', day:'numeric'}));
+                    hoursTrendData.push(workMins / 60);
+                }
 
-        function updateCustomRange() {
-            const start = new Date(document.getElementById('startDate').value);
-            const end = new Date(document.getElementById('endDate').value);
-            
-            if (isNaN(start) || isNaN(end)) return;
-
-            const filtered = globalData.filter(row => {
-                const d = parseDate(row.Date);
-                return d && d >= start && d <= end;
+                if(String(row['Status']).includes('Complete')) statuses['Complete']++;
+                else statuses['Waiting']++;
             });
-            renderSummary(filtered, "Custom Range Overview");
-        }
 
-        function renderSummary(data, title) {
-            document.getElementById('summaryTitle').innerText = title;
-            const metrics = calculateMetrics(data);
+            // Update DOM
+            const avgM = mCount ? Math.round(totalMCommute/mCount) : 0;
+            const avgE = eCount ? Math.round(totalECommute/eCount) : 0;
+            document.getElementById('avg-m-commute').innerText = avgM + " min";
+            document.getElementById('avg-e-commute').innerText = avgE + " min";
+            document.getElementById('total-transit').innerText = Math.round((totalMCommute + totalECommute)/60) + " Hours";
+            document.getElementById('best-worst').innerText = (minC===999 ? 0 : minC) + "m / " + maxC + "m";
             
-            // Set average work hour in the Today card
-            document.getElementById('tdy-avg-hr').innerText = metrics.avgWorkTime;
+            const expectedMins = daysWorked * 9 * 60;
+            const diff = totalWorkMins - expectedMins;
+            const diffEl = document.getElementById('work-diff');
+            diffEl.innerText = (diff >= 0 ? "+" : "") + formatMins(Math.abs(diff));
+            diffEl.className = diff >= 0 ? "text-xl font-bold text-emerald-600" : "text-xl font-bold text-rose-600";
 
-            document.getElementById('summaryStats').innerHTML = `
-                <div class="grid grid-cols-2 gap-4 text-center">
-                    <div>
-                        <p class="text-sm text-gray-500">Total Days Logged</p>
-                        <p class="text-2xl font-bold">${metrics.daysWorked}</p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-gray-500">Average Work Hours</p>
-                        <p class="text-2xl font-bold">${metrics.avgWorkTime}</p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-emerald-600">Total Days Early</p>
-                        <p class="text-2xl font-bold text-emerald-600">${metrics.earlyCount}</p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-rose-600">Total Days Late</p>
-                        <p class="text-2xl font-bold text-rose-600">${metrics.lateCount}</p>
-                    </div>
-                </div>
-            `;
+            // Charts
+            if(charts.punctuality) charts.punctuality.destroy();
+            charts.punctuality = new Chart(document.getElementById('punctualityChart'), {
+                type: 'doughnut',
+                data: { labels: ['Early/On-Time', 'Late'], datasets: [{ data: [early+ontime, late], backgroundColor: ['#10b981', '#f43f5e'], borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'bottom' } } }
+            });
+
+            if(charts.hours) charts.hours.destroy();
+            charts.hours = new Chart(document.getElementById('hoursChart'), {
+                type: 'line',
+                data: { labels: hoursTrendLabels, datasets: [{ label: 'Hours', data: hoursTrendData, borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.1)', fill: true, tension: 0.4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }
+            });
+
+            if(charts.status) charts.status.destroy();
+            charts.status = new Chart(document.getElementById('statusChart'), {
+                type: 'pie',
+                data: { labels: ['Complete', 'Waiting'], datasets: [{ data: [statuses.Complete, statuses.Waiting], backgroundColor: ['#3b82f6', '#fbbf24'], borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            });
         }
 
         window.onload = init;
     </script>
 
-    <div id="loading" class="text-center py-10 text-gray-500 font-bold">Loading Data...</div>
+    <div id="loading" class="text-center py-20 text-slate-500 font-bold animate-pulse text-xl">
+        <i class="fa fa-circle-notch fa-spin mr-2 text-indigo-500"></i> Fetching Live Data...
+    </div>
 
-    <div id="dashboard" class="hidden flex flex-col gap-6">
-
-        <!-- TODAY'S ACTIVITY (Matching Mockup) -->
-        <fieldset class="border-2 border-black p-2 rounded-sm relative mt-4">
-            <legend class="text-xl font-bold px-2 absolute -top-4 left-4 bg-white">Todats Activity</legend>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center mt-3">
-                
-                <!-- Col 1 -->
-                <div class="divider mobile-no-divider">
-                    <p class="text-sm red-title mb-1">Travel Time</p>
-                    <p class="text-xs">Home to office</p>
-                    <p class="text-2xl font-medium" id="tdy-m-commute">--</p>
-                    <p class="text-xs mt-2">Office to Home</p>
-                    <p class="text-2xl font-medium" id="tdy-e-commute">--</p>
-                </div>
-
-                <!-- Col 2 -->
-                <div class="divider mobile-no-divider">
-                    <p class="text-sm font-bold red-title mb-1">Morning Commute</p>
-                    <p class="text-xs">Leave Home at</p>
-                    <p class="text-2xl font-medium" id="tdy-leave-h">--:--</p>
-                    <p class="text-xs mt-2">Arrive Offcei at</p>
-                    <p class="text-2xl font-medium" id="tdy-arrive-o">--:--</p>
-                </div>
-
-                <!-- Col 3 -->
-                <div class="divider mobile-no-divider">
-                    <p class="text-sm font-bold red-title mb-1">Evening Commute</p>
-                    <p class="text-xs">Offoce Leave at</p>
-                    <p class="text-2xl font-medium" id="tdy-leave-o">--:--</p>
-                    <p class="text-xs mt-2">Arrived home at</p>
-                    <p class="text-2xl font-medium" id="tdy-arrive-h">--:--</p>
-                </div>
-
-                <!-- Col 4 -->
-                <div>
-                    <p class="text-sm font-bold red-title mb-1">Work Details</p>
-                    <p class="text-xs">todays work hour</p>
-                    <p class="text-2xl font-medium" id="tdy-work-hr">--:--</p>
-                    <p class="text-xs mt-2">avrage work hour</p>
-                    <p class="text-2xl font-medium" id="tdy-avg-hr">--:--</p>
-                </div>
-
+    <div id="dashboard" class="hidden space-y-6">
+        
+        <!-- Header & Filter -->
+        <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+            <div>
+                <h1 class="text-2xl font-black text-slate-800 tracking-tight">Travel & Work Insights</h1>
+                <p class="text-slate-500 text-sm font-medium">Advanced Commute Dashboard</p>
             </div>
-        </fieldset>
-
-        <!-- WEEK ACTIVITY (Matching Mockup) -->
-        <fieldset class="border-2 border-black p-3 rounded-sm relative mt-4">
-            <legend class="text-xl font-bold px-2 absolute -top-4 left-4 bg-white">Week activity</legend>
-            <div class="relative h-48 mt-6">
-                <!-- Overlay text for Y-axis -->
-                <div class="absolute left-0 top-1/4 transform -translate-y-1/2 text-xs font-bold bg-white px-1 z-10">EARLY</div>
-                <div class="absolute left-0 top-3/4 transform -translate-y-1/2 text-xs font-bold bg-white px-1 z-10">LATE</div>
-                
-                <canvas id="weekChart"></canvas>
-            </div>
-        </fieldset>
-
-        <!-- DATE RANGE SELECTOR & SUMMARY -->
-        <div class="mt-4">
-            <label class="block text-sm font-bold mb-2">Select Range:</label>
-            <select id="rangeSelect" onchange="updateRangeSelection()" class="block w-full border-2 border-black p-2 rounded-sm bg-white font-medium mb-4">
+            <select id="rangeSelect" onchange="updateDashboard()" class="mt-4 md:mt-0 bg-slate-50 border border-slate-200 text-slate-700 font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <option value="currentMonth" selected>Current Month</option>
                 <option value="lastMonth">Last Month</option>
                 <option value="all">All Time</option>
-                <option value="custom">Custom Date Range</option>
             </select>
+        </div>
 
-            <div id="customDates" class="hidden flex gap-2 mb-4">
-                <input type="date" id="startDate" onchange="updateCustomRange()" class="w-full border-2 border-black p-2 rounded-sm text-sm">
-                <input type="date" id="endDate" onchange="updateCustomRange()" class="w-full border-2 border-black p-2 rounded-sm text-sm">
+        <!-- Today's Visual Timeline -->
+        <div class="glass-card">
+            <h2 class="text-lg font-bold text-slate-800 mb-6"><i class="fa-solid fa-route text-indigo-500 mr-2"></i> Today's Journey</h2>
+            <div class="relative w-full h-20 mb-2">
+                <div class="timeline-line"></div>
+                <div id="timeline-progress-bar" class="timeline-progress" style="width: 0%;"></div>
+                
+                <div class="absolute top-0 left-0 w-full flex justify-between px-2">
+                    <div class="flex flex-col items-center">
+                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-home"></i></div>
+                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Left Home</p>
+                        <p class="text-sm font-bold text-slate-800" id="tl-leave-home">--:--</p>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-building"></i></div>
+                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Arrived</p>
+                        <p class="text-sm font-bold text-slate-800" id="tl-arrive-office">--:--</p>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-person-walking-arrow-right"></i></div>
+                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Left Office</p>
+                        <p class="text-sm font-bold text-slate-800" id="tl-leave-office">--:--</p>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-check"></i></div>
+                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Home</p>
+                        <p class="text-sm font-bold text-slate-800" id="tl-arrive-home">--:--</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- Strict Mon-Fri Chart -->
+            <div class="glass-card">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-bold text-slate-800"><i class="fa-regular fa-calendar-check text-emerald-500 mr-2"></i> Current Week (Mon-Fri)</h2>
+                </div>
+                <div class="h-48"><canvas id="weekChart"></canvas></div>
             </div>
 
-            <fieldset class="border-2 border-black p-4 rounded-sm relative mt-4">
-                <legend class="text-lg font-bold px-2 absolute -top-3 left-4 bg-white" id="summaryTitle">Overview</legend>
-                <div id="summaryStats" class="mt-3">
-                    <!-- Stats injected via JS -->
-                </div>
-            </fieldset>
+            <!-- Work Hours Trend -->
+            <div class="glass-card">
+                <h2 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-chart-line text-blue-500 mr-2"></i> Office Hours Trend</h2>
+                <div class="h-48"><canvas id="hoursChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- 6 Data Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div class="glass-card text-center p-4">
+                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Morning</p>
+                <p class="text-2xl font-black text-indigo-600 mt-1" id="avg-m-commute">--</p>
+            </div>
+            <div class="glass-card text-center p-4">
+                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Evening</p>
+                <p class="text-2xl font-black text-purple-600 mt-1" id="avg-e-commute">--</p>
+            </div>
+            <div class="glass-card text-center p-4">
+                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Total Time Lost</p>
+                <p class="text-2xl font-black text-slate-700 mt-1" id="total-transit">--</p>
+            </div>
+            <div class="glass-card text-center p-4">
+                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Best/Worst Day</p>
+                <p class="text-xl font-black text-slate-700 mt-1" id="best-worst">--</p>
+            </div>
+            <div class="glass-card text-center p-4">
+                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Hours vs 9h Target</p>
+                <p class="mt-1" id="work-diff">--</p>
+            </div>
+            <div class="glass-card text-center p-4 flex items-center justify-center">
+                <button onclick="updateDashboard()" class="bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors w-full">
+                    <i class="fa fa-rotate-right mr-1"></i> Refresh Data
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Punctuality Ratio -->
+            <div class="glass-card">
+                <h2 class="text-lg font-bold text-slate-800 mb-4 text-center">Overall Punctuality</h2>
+                <div class="h-40 w-full"><canvas id="punctualityChart"></canvas></div>
+            </div>
+
+            <!-- Status Distribution -->
+            <div class="glass-card">
+                <h2 class="text-lg font-bold text-slate-800 mb-4 text-center">Log Status</h2>
+                <div class="h-40 w-full"><canvas id="statusChart"></canvas></div>
+            </div>
         </div>
 
     </div>
