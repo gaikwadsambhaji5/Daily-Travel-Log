@@ -9,13 +9,17 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body { font-family: 'Inter', -apple-system, sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
-        .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); border-radius: 1rem; padding: 1.25rem; }
-        .timeline-line { position: absolute; top: 1.25rem; left: 10%; right: 10%; height: 4px; background: #e2e8f0; z-index: 0; border-radius: 2px; }
-        .timeline-progress { position: absolute; top: 1.25rem; left: 10%; height: 4px; background: #6366f1; z-index: 1; border-radius: 2px; transition: width 0.5s ease; }
-        .node { position: relative; z-index: 2; display: flex; flex-direction: column; items-center; justify-content: center; width: 2.5rem; height: 2.5rem; border-radius: 9999px; font-size: 1rem; }
+        .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); border-radius: 1rem; padding: 1.5rem; }
+        
+        /* Mobile grid dividers for the 4-column layout */
+        .col-divider { border-right: 1px solid #e2e8f0; }
+        @media (max-width: 767px) {
+            .mobile-border-b { border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 0.5rem; }
+            .mobile-no-border-r { border-right: none; }
+        }
     </style>
 </head>
-<body class="p-4 md:p-8 max-w-5xl mx-auto pb-16">
+<body class="p-4 md:p-8 max-w-6xl mx-auto pb-16">
 
     <script>
         // --- CONFIGURATION ---
@@ -23,7 +27,7 @@
         // ---------------------
 
         let globalData = [];
-        let charts = {}; // Store chart instances to destroy on update
+        let charts = {}; 
 
         async function init() {
             try {
@@ -33,7 +37,7 @@
                 document.getElementById('dashboard').classList.remove('hidden');
                 updateDashboard();
             } catch (error) {
-                document.getElementById('loading').innerHTML = `<span class="text-rose-500"><i class="fa fa-triangle-exclamation"></i> Error loading data. Check URL.</span>`;
+                document.getElementById('loading').innerHTML = `<span class="text-rose-500"><i class="fa fa-triangle-exclamation"></i> Error loading data. Check URL and Apps Script permissions.</span>`;
             }
         }
 
@@ -57,11 +61,18 @@
             return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}h ${String(Math.floor(totalMins % 60)).padStart(2, '0')}m`;
         }
 
+        function formatMinsToHHMM(totalMins) {
+            if (!totalMins || isNaN(totalMins)) return "00:00";
+            const h = Math.floor(totalMins / 60);
+            const m = Math.floor(totalMins % 60);
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        }
+
         function formatTime(timeStr) {
             if (!timeStr) return "--:--";
             let str = String(timeStr).split(':').slice(0,2).join(':');
             if (String(timeStr).includes('T')) {
-                str = new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: true});
+                str = new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
             }
             return str;
         }
@@ -90,40 +101,44 @@
                 filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
             }
 
-            renderTodayTimeline(filtered);
+            renderTodayActivity(filtered);
             renderMonFriChart(globalData); // Always calculate Mon-Fri based on current week
             renderAdvancedMetrics(filtered);
         }
 
-        function renderTodayTimeline(data) {
-            const row = data[data.length - 1];
+        function renderTodayActivity(data) {
+            const row = data[data.length - 1]; // Get latest row for Today's stats
+            
+            // Calculate Average Work Hours from FILTERED data
+            let totalFilteredWorkMins = 0;
+            let validFilteredDays = 0;
+            data.forEach(r => {
+                const wMins = parseDur(r['Office Hours']);
+                if (wMins > 0) { totalFilteredWorkMins += wMins; validFilteredDays++; }
+            });
+            const avgWorkMins = validFilteredDays > 0 ? Math.round(totalFilteredWorkMins / validFilteredDays) : 0;
+            document.getElementById('tdy-avg-work').innerText = formatMinsToHHMM(avgWorkMins);
+
             if (!row) return;
 
-            document.getElementById('tl-leave-home').innerText = formatTime(row['Leave Home']);
-            document.getElementById('tl-arrive-office').innerText = formatTime(row['Arrive Office']);
-            document.getElementById('tl-leave-office').innerText = formatTime(row['Leave Office']);
-            document.getElementById('tl-arrive-home').innerText = formatTime(row['Arrive Home']);
+            // Travel Time Calculations
+            const commute = getCommuteTimes(row);
+            document.getElementById('tdy-m-travel').innerText = commute.morning ? commute.morning + " min" : "--";
+            document.getElementById('tdy-e-travel').innerText = commute.evening ? commute.evening + " min" : "--";
 
-            // Progress bar logic
-            let progress = "0%";
-            let activeNodes = 0;
-            if(row['Leave Home']) { progress = "0%"; activeNodes=1; }
-            if(row['Arrive Office']) { progress = "33%"; activeNodes=2; }
-            if(row['Leave Office']) { progress = "66%"; activeNodes=3; }
-            if(row['Arrive Home']) { progress = "100%"; activeNodes=4; }
-            
-            document.getElementById('timeline-progress-bar').style.width = progress;
-            
-            const nodes = document.querySelectorAll('.node');
-            nodes.forEach((node, idx) => {
-                if(idx < activeNodes) {
-                    node.classList.remove('bg-slate-200', 'text-slate-400');
-                    node.classList.add('bg-indigo-600', 'text-white', 'shadow-md');
-                } else {
-                    node.classList.remove('bg-indigo-600', 'text-white', 'shadow-md');
-                    node.classList.add('bg-slate-200', 'text-slate-400');
-                }
-            });
+            // Specific Times
+            document.getElementById('tdy-leave-h').innerText = formatTime(row['Leave Home']);
+            document.getElementById('tdy-arrive-o').innerText = formatTime(row['Arrive Office']);
+            document.getElementById('tdy-leave-o').innerText = formatTime(row['Leave Office']);
+            document.getElementById('tdy-arrive-h').innerText = formatTime(row['Arrive Home']);
+
+            // Today's Work Hour
+            let workHrsFormatted = "--:--";
+            if (row['Office Hours']) {
+                workHrsFormatted = row['Office Hours'].replace('h ', ':').replace('m', '');
+                if (!workHrsFormatted.includes(':')) workHrsFormatted += ":00"; // Fallback formatting
+            }
+            document.getElementById('tdy-work-hr').innerText = workHrsFormatted;
         }
 
         function renderMonFriChart(allData) {
@@ -219,7 +234,7 @@
             const diff = totalWorkMins - expectedMins;
             const diffEl = document.getElementById('work-diff');
             diffEl.innerText = (diff >= 0 ? "+" : "") + formatMins(Math.abs(diff));
-            diffEl.className = diff >= 0 ? "text-xl font-bold text-emerald-600" : "text-xl font-bold text-rose-600";
+            diffEl.className = diff >= 0 ? "text-xl font-bold text-emerald-600 mt-1" : "text-xl font-bold text-rose-600 mt-1";
 
             // Charts
             if(charts.punctuality) charts.punctuality.destroy();
@@ -253,53 +268,71 @@
 
     <div id="dashboard" class="hidden space-y-6">
         
-        <!-- Header & Filter -->
+        <!-- Header & Date Filter -->
         <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
             <div>
                 <h1 class="text-2xl font-black text-slate-800 tracking-tight">Travel & Work Insights</h1>
                 <p class="text-slate-500 text-sm font-medium">Advanced Commute Dashboard</p>
             </div>
-            <select id="rangeSelect" onchange="updateDashboard()" class="mt-4 md:mt-0 bg-slate-50 border border-slate-200 text-slate-700 font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <select id="rangeSelect" onchange="updateDashboard()" class="mt-4 md:mt-0 bg-slate-50 border border-slate-200 text-slate-700 font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full md:w-auto">
                 <option value="currentMonth" selected>Current Month</option>
                 <option value="lastMonth">Last Month</option>
                 <option value="all">All Time</option>
             </select>
         </div>
 
-        <!-- Today's Visual Timeline -->
+        <!-- Today's Activity (Matching requested 4-column mockup, styled beautifully) -->
         <div class="glass-card">
-            <h2 class="text-lg font-bold text-slate-800 mb-6"><i class="fa-solid fa-route text-indigo-500 mr-2"></i> Today's Journey</h2>
-            <div class="relative w-full h-20 mb-2">
-                <div class="timeline-line"></div>
-                <div id="timeline-progress-bar" class="timeline-progress" style="width: 0%;"></div>
+            <h2 class="text-xl font-extrabold text-slate-800 mb-6 flex items-center">
+                <i class="fa-solid fa-calendar-day text-indigo-500 mr-2"></i> Today's Activity
+            </h2>
+            
+            <div class="grid grid-cols-2 md:grid-cols-4 text-center">
                 
-                <div class="absolute top-0 left-0 w-full flex justify-between px-2">
-                    <div class="flex flex-col items-center">
-                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-home"></i></div>
-                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Left Home</p>
-                        <p class="text-sm font-bold text-slate-800" id="tl-leave-home">--:--</p>
-                    </div>
-                    <div class="flex flex-col items-center">
-                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-building"></i></div>
-                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Arrived</p>
-                        <p class="text-sm font-bold text-slate-800" id="tl-arrive-office">--:--</p>
-                    </div>
-                    <div class="flex flex-col items-center">
-                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-person-walking-arrow-right"></i></div>
-                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Left Office</p>
-                        <p class="text-sm font-bold text-slate-800" id="tl-leave-office">--:--</p>
-                    </div>
-                    <div class="flex flex-col items-center">
-                        <div class="node bg-slate-200 text-slate-400"><i class="fa fa-check"></i></div>
-                        <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase tracking-wide">Home</p>
-                        <p class="text-sm font-bold text-slate-800" id="tl-arrive-home">--:--</p>
-                    </div>
+                <!-- Col 1: Travel Time -->
+                <div class="col-divider mobile-border-b md:px-2 flex flex-col justify-center">
+                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Travel Time</p>
+                    <p class="text-xs text-slate-500 font-medium">Home to office</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-m-travel">--</p>
+                    <div class="h-4"></div>
+                    <p class="text-xs text-slate-500 font-medium">Office to Home</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-e-travel">--</p>
                 </div>
+
+                <!-- Col 2: Morning Commute -->
+                <div class="col-divider mobile-border-b mobile-no-border-r md:px-2 flex flex-col justify-center">
+                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Morning Commute</p>
+                    <p class="text-xs text-slate-500 font-medium">Leave Home at</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-h">--:--</p>
+                    <div class="h-4"></div>
+                    <p class="text-xs text-slate-500 font-medium">Arrive Office at</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-o">--:--</p>
+                </div>
+
+                <!-- Col 3: Evening Commute -->
+                <div class="col-divider md:px-2 flex flex-col justify-center pt-2 md:pt-0">
+                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Evening Commute</p>
+                    <p class="text-xs text-slate-500 font-medium">Office Leave at</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-leave-o">--:--</p>
+                    <div class="h-4"></div>
+                    <p class="text-xs text-slate-500 font-medium">Arrived home at</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-h">--:--</p>
+                </div>
+
+                <!-- Col 4: Work Details -->
+                <div class="md:px-2 flex flex-col justify-center pt-2 md:pt-0">
+                    <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Work Details</p>
+                    <p class="text-xs text-slate-500 font-medium">todays work hour</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-work-hr">--:--</p>
+                    <div class="h-4"></div>
+                    <p class="text-xs text-slate-500 font-medium">average work hour</p>
+                    <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-avg-work">--:--</p>
+                </div>
+
             </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
             <!-- Strict Mon-Fri Chart -->
             <div class="glass-card">
                 <div class="flex justify-between items-center mb-4">
@@ -318,28 +351,28 @@
         <!-- 6 Data Cards -->
         <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
             <div class="glass-card text-center p-4">
-                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Morning</p>
-                <p class="text-2xl font-black text-indigo-600 mt-1" id="avg-m-commute">--</p>
+                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Morning</p>
+                <p class="text-xl sm:text-2xl font-black text-indigo-600 mt-1" id="avg-m-commute">--</p>
             </div>
             <div class="glass-card text-center p-4">
-                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Evening</p>
-                <p class="text-2xl font-black text-purple-600 mt-1" id="avg-e-commute">--</p>
+                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Evening</p>
+                <p class="text-xl sm:text-2xl font-black text-purple-600 mt-1" id="avg-e-commute">--</p>
             </div>
             <div class="glass-card text-center p-4">
-                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Total Time Lost</p>
-                <p class="text-2xl font-black text-slate-700 mt-1" id="total-transit">--</p>
+                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Total Time Lost</p>
+                <p class="text-xl sm:text-2xl font-black text-slate-700 mt-1" id="total-transit">--</p>
             </div>
             <div class="glass-card text-center p-4">
-                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Best/Worst Day</p>
-                <p class="text-xl font-black text-slate-700 mt-1" id="best-worst">--</p>
+                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Best/Worst Day</p>
+                <p class="text-lg sm:text-xl font-black text-slate-700 mt-1" id="best-worst">--</p>
             </div>
             <div class="glass-card text-center p-4">
-                <p class="text-xs text-slate-500 font-bold uppercase tracking-wide">Hours vs 9h Target</p>
+                <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Hrs vs 9h Target</p>
                 <p class="mt-1" id="work-diff">--</p>
             </div>
             <div class="glass-card text-center p-4 flex items-center justify-center">
-                <button onclick="updateDashboard()" class="bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors w-full">
-                    <i class="fa fa-rotate-right mr-1"></i> Refresh Data
+                <button onclick="init()" class="bg-slate-800 hover:bg-slate-700 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors w-full h-full min-h-[3rem] shadow-sm">
+                    <i class="fa fa-rotate-right mr-1"></i> Refresh
                 </button>
             </div>
         </div>
