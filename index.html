@@ -17,6 +17,13 @@
             .mobile-border-b { border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 0.5rem; }
             .mobile-no-border-r { border-right: none; }
         }
+
+        /* Timeline Specific Styles */
+        .tl-node { width: 3.5rem; height: 3.5rem; border-radius: 9999px; display: flex; align-items: center; justify-content: center; flex-direction: column; z-index: 10; position: relative; transition: all 0.3s ease;}
+        .tl-active { background-color: #38bdf8; color: white; }
+        .tl-inactive { background-color: #e2e8f0; color: #64748b; }
+        .tl-line-container { flex-grow: 1; height: 6px; background-color: #e2e8f0; position: relative; margin: 0 -0.5rem; z-index: 0; border-radius: 3px; overflow: hidden; }
+        .tl-progress { height: 100%; background-color: #38bdf8; position: absolute; top: 0; left: 0; transition: width 1s linear; border-radius: 3px;}
     </style>
 </head>
 <body class="p-4 md:p-8 max-w-6xl mx-auto pb-16">
@@ -28,6 +35,7 @@
 
         let globalData = [];
         let charts = {}; 
+        let animationInterval; // Stores the timeline interval
 
         async function init() {
             try {
@@ -48,17 +56,32 @@
             return new Date(dateStr);
         }
 
+        // Parse precise date AND time together into a Date object for animation math
+        function parseDateTime(dateStr, timeStr) {
+            if (!dateStr || !timeStr || timeStr.trim() === "") return null;
+            const d = parseDate(dateStr);
+            if (!d) return null;
+            
+            // Handle native sheets timestamp (e.g. 1899-12-30T19:27:00.000Z) or raw time (19:27:00)
+            let timeString = String(timeStr);
+            if (timeString.includes('T')) {
+                const tempD = new Date(timeString);
+                d.setHours(tempD.getHours(), tempD.getMinutes(), tempD.getSeconds());
+            } else {
+                const parts = timeString.split(':');
+                if (parts.length >= 2) {
+                    d.setHours(parseInt(parts[0]), parseInt(parts[1]), parts.length > 2 ? parseInt(parts[2]) : 0);
+                }
+            }
+            return d;
+        }
+
         function parseDur(durStr) {
             if (!durStr) return 0;
             let mins = 0;
             if (durStr.match(/(\d+)h/)) mins += parseInt(durStr.match(/(\d+)h/)[1]) * 60;
             if (durStr.match(/(\d+)m/)) mins += parseInt(durStr.match(/(\d+)m/)[1]);
             return mins;
-        }
-
-        function formatMins(totalMins) {
-            if (!totalMins || isNaN(totalMins)) return "00:00";
-            return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}h ${String(Math.floor(totalMins % 60)).padStart(2, '0')}m`;
         }
 
         function formatMinsToHHMM(totalMins) {
@@ -68,8 +91,17 @@
             return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         }
 
-        function formatTime(timeStr) {
-            if (!timeStr) return "--:--";
+        function formatDurationMs(ms) {
+            if (!ms || isNaN(ms)) return "";
+            const totalMins = Math.floor(ms / 60000);
+            const h = Math.floor(totalMins / 60);
+            const m = Math.floor(totalMins % 60);
+            if (h > 0) return `${h}h, ${String(m).padStart(2, '0')}min`;
+            return `${m} min`;
+        }
+
+        function formatTimeDisplay(timeStr) {
+            if (!timeStr || String(timeStr).trim() === "") return "--:--";
             let str = String(timeStr).split(':').slice(0,2).join(':');
             if (String(timeStr).includes('T')) {
                 str = new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
@@ -79,13 +111,35 @@
 
         function getCommuteTimes(row) {
             let m = 0, e = 0;
-            const th = parseDur(formatTime(row['Leave Home']).replace(':','h')+'m');
-            const to = parseDur(formatTime(row['Arrive Office']).replace(':','h')+'m');
-            const tl = parseDur(formatTime(row['Leave Office']).replace(':','h')+'m');
-            const ta = parseDur(formatTime(row['Arrive Home']).replace(':','h')+'m');
+            const th = parseDur(formatTimeDisplay(row['Leave Home']).replace(':','h')+'m');
+            const to = parseDur(formatTimeDisplay(row['Arrive Office']).replace(':','h')+'m');
+            const tl = parseDur(formatTimeDisplay(row['Leave Office']).replace(':','h')+'m');
+            const ta = parseDur(formatTimeDisplay(row['Arrive Home']).replace(':','h')+'m');
             if(th && to) m = to - th;
             if(tl && ta) e = ta - tl;
             return { morning: m > 0 ? m : null, evening: e > 0 ? e : null };
+        }
+
+        function calculateHistoricalAverages(data) {
+            let tMins = 0, mCount = 0;
+            let tOffice = 0, oCount = 0;
+            let tEve = 0, eCount = 0;
+
+            data.forEach(row => {
+                const c = getCommuteTimes(row);
+                if (c.morning) { tMins += c.morning; mCount++; }
+                if (c.evening) { tEve += c.evening; eCount++; }
+                
+                const wMins = parseDur(row['Office Hours']);
+                if (wMins > 0) { tOffice += wMins; oCount++; }
+            });
+
+            // Return in minutes. Default to typical times if no history exists.
+            return {
+                morning: mCount ? (tMins / mCount) : 30,
+                office: oCount ? (tOffice / oCount) : 540, // 9 hours default
+                evening: eCount ? (tEve / eCount) : 30
+            };
         }
 
         function updateDashboard() {
@@ -93,7 +147,6 @@
             const now = new Date();
             let filtered = globalData.filter(row => row.Date && row.Date.trim() !== "");
 
-            // Apply Date Filter
             if (range === 'currentMonth') {
                 filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === now.getMonth() && parseDate(row.Date)?.getFullYear() === now.getFullYear());
             } else if (range === 'lastMonth') {
@@ -101,15 +154,90 @@
                 filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
             }
 
+            const averages = calculateHistoricalAverages(globalData); // Use global data for stable averages
+            
             renderTodayActivity(filtered);
-            renderMonFriChart(globalData); // Always calculate Mon-Fri based on current week
+            renderDynamicTimeline(filtered, averages);
+            renderMonFriChart(globalData);
             renderAdvancedMetrics(filtered);
         }
 
+        function renderDynamicTimeline(data, averages) {
+            clearInterval(animationInterval);
+            const row = data[data.length - 1]; // Today's actual data
+            if (!row) return;
+
+            // Parsed Date objects for exact math
+            const tLeaveH = parseDateTime(row.Date, row['Leave Home']);
+            const tArriveO = parseDateTime(row.Date, row['Arrive Office']);
+            const tLeaveO = parseDateTime(row.Date, row['Leave Office']);
+            const tArriveH = parseDateTime(row.Date, row['Arrive Home']);
+
+            // UI Node Updates
+            document.getElementById('tl-node-1').className = tLeaveH ? 'tl-node tl-active' : 'tl-node tl-inactive';
+            document.getElementById('tl-time-1').innerText = formatTimeDisplay(row['Leave Home']);
+
+            document.getElementById('tl-node-2').className = tArriveO ? 'tl-node tl-active' : 'tl-node tl-inactive';
+            document.getElementById('tl-time-2').innerText = formatTimeDisplay(row['Arrive Office']);
+
+            document.getElementById('tl-node-3').className = tLeaveO ? 'tl-node tl-active' : 'tl-node tl-inactive';
+            document.getElementById('tl-time-3').innerText = formatTimeDisplay(row['Leave Office']);
+
+            document.getElementById('tl-node-4').className = tArriveH ? 'tl-node tl-active' : 'tl-node tl-inactive';
+            document.getElementById('tl-time-4').innerText = formatTimeDisplay(row['Arrive Home']);
+
+            // Animation Loop Function
+            const updateVisuals = () => {
+                const now = new Date();
+
+                // Helper to update segment
+                const setSeg = (id, pct, text, isItalic) => {
+                    document.getElementById(`seg-prog-${id}`).style.width = `${pct}%`;
+                    const textEl = document.getElementById(`seg-text-${id}`);
+                    textEl.innerText = text;
+                    if(isItalic) textEl.classList.add('italic', 'text-slate-400');
+                    else textEl.classList.remove('italic', 'text-slate-400');
+                };
+
+                // SEGMENT 1: Home to Office
+                if (tLeaveH && tArriveO) {
+                    setSeg(1, 100, formatDurationMs(tArriveO - tLeaveH), false);
+                } else if (tLeaveH && !tArriveO) {
+                    let pct = ((now - tLeaveH) / (averages.morning * 60000)) * 100;
+                    setSeg(1, Math.min(Math.max(pct, 0), 99), "On the way", true);
+                } else {
+                    setSeg(1, 0, "", false);
+                }
+
+                // SEGMENT 2: Office Hours
+                if (tArriveO && tLeaveO) {
+                    setSeg(2, 100, formatDurationMs(tLeaveO - tArriveO) + " in office", false);
+                } else if (tArriveO && !tLeaveO) {
+                    let pct = ((now - tArriveO) / (averages.office * 60000)) * 100;
+                    setSeg(2, Math.min(Math.max(pct, 0), 99), "waiting for office Leave", true);
+                } else {
+                    setSeg(2, 0, "waiting for office Leave", true);
+                }
+
+                // SEGMENT 3: Office to Home
+                if (tLeaveO && tArriveH) {
+                    setSeg(3, 100, formatDurationMs(tArriveH - tLeaveO), false);
+                } else if (tLeaveO && !tArriveH) {
+                    let pct = ((now - tLeaveO) / (averages.evening * 60000)) * 100;
+                    setSeg(3, Math.min(Math.max(pct, 0), 99), "On the way", true);
+                } else {
+                    setSeg(3, 0, "waiting...", true);
+                }
+            };
+
+            // Run immediately, then interval
+            updateVisuals();
+            animationInterval = setInterval(updateVisuals, 30000); // Check every 30 seconds
+        }
+
         function renderTodayActivity(data) {
-            const row = data[data.length - 1]; // Get latest row for Today's stats
+            const row = data[data.length - 1]; 
             
-            // Calculate Average Work Hours from FILTERED data
             let totalFilteredWorkMins = 0;
             let validFilteredDays = 0;
             data.forEach(r => {
@@ -121,28 +249,24 @@
 
             if (!row) return;
 
-            // Travel Time Calculations
             const commute = getCommuteTimes(row);
             document.getElementById('tdy-m-travel').innerText = commute.morning ? commute.morning + " min" : "--";
             document.getElementById('tdy-e-travel').innerText = commute.evening ? commute.evening + " min" : "--";
 
-            // Specific Times
-            document.getElementById('tdy-leave-h').innerText = formatTime(row['Leave Home']);
-            document.getElementById('tdy-arrive-o').innerText = formatTime(row['Arrive Office']);
-            document.getElementById('tdy-leave-o').innerText = formatTime(row['Leave Office']);
-            document.getElementById('tdy-arrive-h').innerText = formatTime(row['Arrive Home']);
+            document.getElementById('tdy-leave-h').innerText = formatTimeDisplay(row['Leave Home']);
+            document.getElementById('tdy-arrive-o').innerText = formatTimeDisplay(row['Arrive Office']);
+            document.getElementById('tdy-leave-o').innerText = formatTimeDisplay(row['Leave Office']);
+            document.getElementById('tdy-arrive-h').innerText = formatTimeDisplay(row['Arrive Home']);
 
-            // Today's Work Hour
             let workHrsFormatted = "--:--";
             if (row['Office Hours']) {
                 workHrsFormatted = row['Office Hours'].replace('h ', ':').replace('m', '');
-                if (!workHrsFormatted.includes(':')) workHrsFormatted += ":00"; // Fallback formatting
+                if (!workHrsFormatted.includes(':')) workHrsFormatted += ":00";
             }
             document.getElementById('tdy-work-hr').innerText = workHrsFormatted;
         }
 
         function renderMonFriChart(allData) {
-            // Find current week's Monday to Friday based on latest entry
             if(allData.length === 0) return;
             const lastDate = parseDate(allData[allData.length-1].Date);
             const dayOfWeek = lastDate.getDay(); 
@@ -222,21 +346,29 @@
                 else statuses['Waiting']++;
             });
 
-            // Update DOM
             const avgM = mCount ? Math.round(totalMCommute/mCount) : 0;
             const avgE = eCount ? Math.round(totalECommute/eCount) : 0;
             document.getElementById('avg-m-commute').innerText = avgM + " min";
             document.getElementById('avg-e-commute').innerText = avgE + " min";
-            document.getElementById('total-transit').innerText = Math.round((totalMCommute + totalECommute)/60) + " Hours";
+            
+            const totalHoursLost = Math.floor((totalMCommute + totalECommute)/60);
+            const totalMinsLost = (totalMCommute + totalECommute) % 60;
+            document.getElementById('total-transit').innerText = `${totalHoursLost}h ${totalMinsLost}m`;
+            
             document.getElementById('best-worst').innerText = (minC===999 ? 0 : minC) + "m / " + maxC + "m";
             
             const expectedMins = daysWorked * 9 * 60;
             const diff = totalWorkMins - expectedMins;
             const diffEl = document.getElementById('work-diff');
-            diffEl.innerText = (diff >= 0 ? "+" : "") + formatMins(Math.abs(diff));
-            diffEl.className = diff >= 0 ? "text-xl font-bold text-emerald-600 mt-1" : "text-xl font-bold text-rose-600 mt-1";
+            
+            if (diff === 0 && daysWorked === 0) {
+                diffEl.innerText = "--";
+                diffEl.className = "mt-1";
+            } else {
+                diffEl.innerText = (diff >= 0 ? "+" : "-") + formatMinsToHHMM(Math.abs(diff));
+                diffEl.className = diff >= 0 ? "text-xl font-bold text-emerald-600 mt-1" : "text-xl font-bold text-rose-600 mt-1";
+            }
 
-            // Charts
             if(charts.punctuality) charts.punctuality.destroy();
             charts.punctuality = new Chart(document.getElementById('punctualityChart'), {
                 type: 'doughnut',
@@ -268,28 +400,94 @@
 
     <div id="dashboard" class="hidden space-y-6">
         
-        <!-- Header & Date Filter -->
         <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
             <div>
                 <h1 class="text-2xl font-black text-slate-800 tracking-tight">Travel & Work Insights</h1>
-                <p class="text-slate-500 text-sm font-medium">Advanced Commute Dashboard</p>
+                <p class="text-slate-500 text-sm font-medium">Real-time Animation Dashboard</p>
             </div>
-            <select id="rangeSelect" onchange="updateDashboard()" class="mt-4 md:mt-0 bg-slate-50 border border-slate-200 text-slate-700 font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full md:w-auto">
+            <select id="rangeSelect" onchange="updateDashboard()" class="mt-4 md:mt-0 bg-slate-50 border border-slate-200 text-slate-700 font-bold py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 w-full md:w-auto">
                 <option value="currentMonth" selected>Current Month</option>
                 <option value="lastMonth">Last Month</option>
                 <option value="all">All Time</option>
             </select>
         </div>
 
-        <!-- Today's Activity (Matching requested 4-column mockup, styled beautifully) -->
+        <!-- NEW VISUAL TIMELINE -->
+        <div class="glass-card overflow-hidden">
+            <h2 class="text-xl font-extrabold text-slate-800 mb-8 flex items-center">
+                <i class="fa-solid fa-route text-sky-500 mr-2"></i> Real-Time Journey
+            </h2>
+            
+            <div class="flex items-center justify-between w-full max-w-4xl mx-auto px-4 sm:px-8 mb-6">
+                
+                <!-- Node 1: Home -->
+                <div class="flex flex-col items-center">
+                    <p class="text-sm font-bold text-slate-800 mb-2">Home</p>
+                    <div id="tl-node-1" class="tl-node tl-inactive text-sm font-bold shadow-md">
+                        <i class="fa fa-house mb-0.5"></i>
+                    </div>
+                    <p class="text-[10px] font-bold text-red-500 mt-2 uppercase tracking-wide">Leave At</p>
+                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-1">--:--</p>
+                </div>
+
+                <!-- Segment 1 -->
+                <div class="tl-line-container relative">
+                    <div id="seg-text-1" class="absolute -top-6 left-0 w-full text-center text-[11px] sm:text-xs font-bold text-slate-500 italic"></div>
+                    <div id="seg-prog-1" class="tl-progress" style="width: 0%;"></div>
+                </div>
+
+                <!-- Node 2: Office Arrive -->
+                <div class="flex flex-col items-center">
+                    <p class="text-sm font-bold text-slate-800 mb-2">Office</p>
+                    <div id="tl-node-2" class="tl-node tl-inactive text-sm font-bold shadow-md">
+                        <i class="fa fa-building mb-0.5"></i>
+                    </div>
+                    <p class="text-[10px] font-bold text-green-500 mt-2 uppercase tracking-wide">Arrive At</p>
+                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-2">--:--</p>
+                </div>
+
+                <!-- Segment 2 -->
+                <div class="tl-line-container relative">
+                    <div id="seg-text-2" class="absolute -top-6 left-0 w-full text-center text-[11px] sm:text-xs font-bold text-slate-500 italic"></div>
+                    <div id="seg-prog-2" class="tl-progress" style="width: 0%;"></div>
+                </div>
+
+                <!-- Node 3: Office Leave -->
+                <div class="flex flex-col items-center">
+                    <p class="text-sm font-bold text-slate-800 mb-2">Office</p>
+                    <div id="tl-node-3" class="tl-node tl-inactive text-sm font-bold shadow-md">
+                        <i class="fa fa-person-walking-arrow-right mb-0.5"></i>
+                    </div>
+                    <p class="text-[10px] font-bold text-red-500 mt-2 uppercase tracking-wide">Leave At</p>
+                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-3">--:--</p>
+                </div>
+
+                <!-- Segment 3 -->
+                <div class="tl-line-container relative">
+                    <div id="seg-text-3" class="absolute -top-6 left-0 w-full text-center text-[11px] sm:text-xs font-bold text-slate-500 italic"></div>
+                    <div id="seg-prog-3" class="tl-progress" style="width: 0%;"></div>
+                </div>
+
+                <!-- Node 4: Home Arrive -->
+                <div class="flex flex-col items-center">
+                    <p class="text-sm font-bold text-slate-800 mb-2">Home</p>
+                    <div id="tl-node-4" class="tl-node tl-inactive text-sm font-bold shadow-md">
+                        <i class="fa fa-check mb-0.5"></i>
+                    </div>
+                    <p class="text-[10px] font-bold text-green-500 mt-2 uppercase tracking-wide">Arrive At</p>
+                    <p class="text-lg font-black text-slate-800 tracking-tight" id="tl-time-4">--:--</p>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Today's Activity Stats Grid -->
         <div class="glass-card">
             <h2 class="text-xl font-extrabold text-slate-800 mb-6 flex items-center">
-                <i class="fa-solid fa-calendar-day text-indigo-500 mr-2"></i> Today's Activity
+                <i class="fa-solid fa-calendar-day text-sky-500 mr-2"></i> Today's Summary
             </h2>
             
             <div class="grid grid-cols-2 md:grid-cols-4 text-center">
-                
-                <!-- Col 1: Travel Time -->
                 <div class="col-divider mobile-border-b md:px-2 flex flex-col justify-center">
                     <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Travel Time</p>
                     <p class="text-xs text-slate-500 font-medium">Home to office</p>
@@ -299,7 +497,6 @@
                     <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-e-travel">--</p>
                 </div>
 
-                <!-- Col 2: Morning Commute -->
                 <div class="col-divider mobile-border-b mobile-no-border-r md:px-2 flex flex-col justify-center">
                     <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Morning Commute</p>
                     <p class="text-xs text-slate-500 font-medium">Leave Home at</p>
@@ -309,7 +506,6 @@
                     <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-o">--:--</p>
                 </div>
 
-                <!-- Col 3: Evening Commute -->
                 <div class="col-divider md:px-2 flex flex-col justify-center pt-2 md:pt-0">
                     <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Evening Commute</p>
                     <p class="text-xs text-slate-500 font-medium">Office Leave at</p>
@@ -319,7 +515,6 @@
                     <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-arrive-h">--:--</p>
                 </div>
 
-                <!-- Col 4: Work Details -->
                 <div class="md:px-2 flex flex-col justify-center pt-2 md:pt-0">
                     <p class="text-sm font-bold text-rose-500 uppercase tracking-wide mb-3">Work Details</p>
                     <p class="text-xs text-slate-500 font-medium">todays work hour</p>
@@ -328,12 +523,10 @@
                     <p class="text-xs text-slate-500 font-medium">average work hour</p>
                     <p class="text-3xl font-black text-slate-800 tracking-tight" id="tdy-avg-work">--:--</p>
                 </div>
-
             </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Strict Mon-Fri Chart -->
             <div class="glass-card">
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="text-lg font-bold text-slate-800"><i class="fa-regular fa-calendar-check text-emerald-500 mr-2"></i> Current Week (Mon-Fri)</h2>
@@ -341,22 +534,20 @@
                 <div class="h-48"><canvas id="weekChart"></canvas></div>
             </div>
 
-            <!-- Work Hours Trend -->
             <div class="glass-card">
                 <h2 class="text-lg font-bold text-slate-800 mb-4"><i class="fa-solid fa-chart-line text-blue-500 mr-2"></i> Office Hours Trend</h2>
                 <div class="h-48"><canvas id="hoursChart"></canvas></div>
             </div>
         </div>
 
-        <!-- 6 Data Cards -->
         <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
             <div class="glass-card text-center p-4">
                 <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Morning</p>
-                <p class="text-xl sm:text-2xl font-black text-indigo-600 mt-1" id="avg-m-commute">--</p>
+                <p class="text-xl sm:text-2xl font-black text-sky-500 mt-1" id="avg-m-commute">--</p>
             </div>
             <div class="glass-card text-center p-4">
                 <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Avg Evening</p>
-                <p class="text-xl sm:text-2xl font-black text-purple-600 mt-1" id="avg-e-commute">--</p>
+                <p class="text-xl sm:text-2xl font-black text-indigo-500 mt-1" id="avg-e-commute">--</p>
             </div>
             <div class="glass-card text-center p-4">
                 <p class="text-[10px] sm:text-xs text-slate-500 font-bold uppercase tracking-wide">Total Time Lost</p>
@@ -378,13 +569,11 @@
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Punctuality Ratio -->
             <div class="glass-card">
                 <h2 class="text-lg font-bold text-slate-800 mb-4 text-center">Overall Punctuality</h2>
                 <div class="h-40 w-full"><canvas id="punctualityChart"></canvas></div>
             </div>
 
-            <!-- Status Distribution -->
             <div class="glass-card">
                 <h2 class="text-lg font-bold text-slate-800 mb-4 text-center">Log Status</h2>
                 <div class="h-40 w-full"><canvas id="statusChart"></canvas></div>
