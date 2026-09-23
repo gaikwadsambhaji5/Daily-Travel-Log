@@ -26,7 +26,7 @@
 
         async function init() {
             try {
-                // UNIVERSAL CACHE BUSTER
+                // UNIVERSAL CACHE BUSTER FIX
                 const fetchUrl = WEB_APP_URL + "?nocache=" + new Date().getTime() + "&rnd=" + Math.random();
                 const response = await fetch(fetchUrl, { cache: 'no-store' });
                 globalData = await response.json();
@@ -41,8 +41,11 @@
             }
         }
 
-        // --- BULLETPROOF DATA PARSER ---
-        // Ignores spaces, capitals, and reversed words (e.g., "Home Arrive" vs "Arrive Home")
+        // Bulletproof check for valid time data
+        function hasData(val) {
+            return val !== null && val !== undefined && String(val).trim() !== "" && String(val).trim() !== "--:--";
+        }
+
         function safeGet(row, keywords) {
             if(!row) return null;
             const keys = Object.keys(row);
@@ -55,10 +58,6 @@
             return null;
         }
 
-        function hasData(val) {
-            return val !== null && val !== undefined && String(val).trim() !== "" && String(val).trim() !== "--:--";
-        }
-
         function parseDate(dateStr) {
             if (!dateStr) return null;
             const parts = dateStr.split('/');
@@ -66,14 +65,24 @@
             return new Date(dateStr);
         }
 
-        // Converts normal 24h, ISO, and manual AM/PM entries perfectly to minutes
         function timeStrToMinutes(timeStr) {
             if (!hasData(timeStr)) return null;
-            let str = String(timeStr).trim();
-            if (str.includes('T')) { let d = new Date(str); return d.getHours() * 60 + d.getMinutes(); }
+            let str = String(timeStr).trim().toLowerCase();
+
+            // FIX: Safely parse "10h 3m" durations so it doesn't calculate 500+ hour averages!
+            if (str.match(/(\d+)h/) || (str.match(/(\d+)m/) && !str.includes('am') && !str.includes('pm'))) {
+                let mins = 0;
+                let hMatch = str.match(/(\d+)h/);
+                let mMatch = str.match(/(\d+)m/);
+                if (hMatch) mins += parseInt(hMatch[1], 10) * 60;
+                if (mMatch) mins += parseInt(mMatch[1], 10);
+                return mins;
+            }
+
+            if (str.includes('t')) { let d = new Date(timeStr); return d.getHours() * 60 + d.getMinutes(); }
             
-            let isPM = str.toLowerCase().includes('pm');
-            let isAM = str.toLowerCase().includes('am');
+            let isPM = str.includes('pm');
+            let isAM = str.includes('am');
             str = str.replace(/[^0-9:]/g, ''); 
             let parts = str.split(':'); 
             
@@ -159,7 +168,6 @@
             if(hasData(oL)) w2 = "100%";
             else if(hasData(oA)) w2 = "50%";
 
-            // The specific fix for the "stuck" home segment
             if(hasData(hA)) w3 = "100%";
             else if(hasData(oL)) w3 = "50%";
 
