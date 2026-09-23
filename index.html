@@ -26,7 +26,7 @@
 
         async function init() {
             try {
-                // UNIVERSAL CACHE BUSTER FIX
+                // UNIVERSAL CACHE BUSTER
                 const fetchUrl = WEB_APP_URL + "?nocache=" + new Date().getTime() + "&rnd=" + Math.random();
                 const response = await fetch(fetchUrl, { cache: 'no-store' });
                 globalData = await response.json();
@@ -41,7 +41,20 @@
             }
         }
 
-        // Bulletproof check for valid time data
+        // --- BULLETPROOF DATA PARSER ---
+        // Ignores spaces, capitals, and reversed words (e.g., "Home Arrive" vs "Arrive Home")
+        function safeGet(row, keywords) {
+            if(!row) return null;
+            const keys = Object.keys(row);
+            for(let k of keys) {
+                let cleanKey = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                for(let word of keywords) {
+                    if(cleanKey.includes(word)) return row[k];
+                }
+            }
+            return null;
+        }
+
         function hasData(val) {
             return val !== null && val !== undefined && String(val).trim() !== "" && String(val).trim() !== "--:--";
         }
@@ -53,12 +66,32 @@
             return new Date(dateStr);
         }
 
+        // Converts normal 24h, ISO, and manual AM/PM entries perfectly to minutes
         function timeStrToMinutes(timeStr) {
             if (!hasData(timeStr)) return null;
-            let str = String(timeStr);
+            let str = String(timeStr).trim();
             if (str.includes('T')) { let d = new Date(str); return d.getHours() * 60 + d.getMinutes(); }
-            let parts = str.split(':'); if (parts.length < 2) return null;
-            return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+            
+            let isPM = str.toLowerCase().includes('pm');
+            let isAM = str.toLowerCase().includes('am');
+            str = str.replace(/[^0-9:]/g, ''); 
+            let parts = str.split(':'); 
+            
+            if (parts.length < 2) {
+                 if(parts.length === 1 && str.length > 0) {
+                     let h = parseInt(parts[0], 10);
+                     if (isPM && h !== 12) h += 12;
+                     if (isAM && h === 12) h = 0;
+                     return h * 60;
+                 }
+                 return null;
+            }
+            
+            let h = parseInt(parts[0], 10);
+            let m = parseInt(parts[1], 10);
+            if (isPM && h !== 12) h += 12;
+            if (isAM && h === 12) h = 0;
+            return h * 60 + m;
         }
 
         function timeToDecimal(timeStr) {
@@ -67,29 +100,31 @@
         }
 
         function decimalToTime(dec) {
+            if (dec === null) return "--:--";
             let h = Math.floor(dec);
             let m = Math.round((dec - h) * 60);
             return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
         }
 
         function formatMins(totalMins) {
-            if (!totalMins || isNaN(totalMins)) return "00:00";
+            if (!totalMins || isNaN(totalMins)) return "--:--";
             return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(Math.floor(totalMins % 60)).padStart(2, '0')}`;
         }
 
         function formatTime(timeStr) {
-            if (!hasData(timeStr)) return "--:--";
-            let str = String(timeStr).split(':').slice(0,2).join(':');
-            if (String(timeStr).includes('T')) { str = new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false}); }
-            return str;
+            let mins = timeStrToMinutes(timeStr);
+            if (mins === null) return "--:--";
+            let h = Math.floor(mins / 60);
+            let m = mins % 60;
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
         }
 
         function getCommuteTimes(row) {
             let m = null, e = null;
-            const th = timeStrToMinutes(row['Leave Home']);
-            const to = timeStrToMinutes(row['Arrive Office']);
-            const tl = timeStrToMinutes(row['Leave Office']);
-            const ta = timeStrToMinutes(row['Arrive Home']);
+            const th = timeStrToMinutes(safeGet(row, ['leavehome', 'homeleave']));
+            const to = timeStrToMinutes(safeGet(row, ['arriveoffice', 'officearrive']));
+            const tl = timeStrToMinutes(safeGet(row, ['leaveoffice', 'officeleave']));
+            const ta = timeStrToMinutes(safeGet(row, ['arrivehome', 'homearrive']));
             if(th !== null && to !== null && (to - th) > 0) m = to - th;
             if(tl !== null && ta !== null && (ta - tl) > 0) e = ta - tl;
             return { morning: m, evening: e };
@@ -106,22 +141,27 @@
             if (data.length === 0) return;
             const row = data[data.length - 1];
 
-            document.getElementById('tl-leave-home').innerText = formatTime(row['Leave Home']);
-            document.getElementById('tl-arrive-office').innerText = formatTime(row['Arrive Office']);
-            document.getElementById('tl-leave-office').innerText = formatTime(row['Leave Office']);
-            document.getElementById('tl-arrive-home').innerText = formatTime(row['Arrive Home']);
+            const hL = safeGet(row, ['leavehome', 'homeleave']);
+            const oA = safeGet(row, ['arriveoffice', 'officearrive']);
+            const oL = safeGet(row, ['leaveoffice', 'officeleave']);
+            const hA = safeGet(row, ['arrivehome', 'homearrive']);
+
+            document.getElementById('tl-leave-home').innerText = formatTime(hL);
+            document.getElementById('tl-arrive-office').innerText = formatTime(oA);
+            document.getElementById('tl-leave-office').innerText = formatTime(oL);
+            document.getElementById('tl-arrive-home').innerText = formatTime(hA);
 
             let w1 = "0%", w2 = "0%", w3 = "0%";
             
-            if(hasData(row['Arrive Office'])) w1 = "100%";
-            else if(hasData(row['Leave Home'])) w1 = "50%";
+            if(hasData(oA)) w1 = "100%";
+            else if(hasData(hL)) w1 = "50%";
             
-            if(hasData(row['Leave Office'])) w2 = "100%";
-            else if(hasData(row['Arrive Office'])) w2 = "50%";
+            if(hasData(oL)) w2 = "100%";
+            else if(hasData(oA)) w2 = "50%";
 
-            // Stuck Timeline Fix: Strictly verifies Arrive Home exists
-            if(hasData(row['Arrive Home'])) w3 = "100%";
-            else if(hasData(row['Leave Office'])) w3 = "50%";
+            // The specific fix for the "stuck" home segment
+            if(hasData(hA)) w3 = "100%";
+            else if(hasData(oL)) w3 = "50%";
 
             document.getElementById('bar-1').style.width = w1;
             document.getElementById('bar-2').style.width = w2;
@@ -135,19 +175,25 @@
             
             let totalWorkMins = 0; let validWorkDays = 0;
             data.forEach(r => {
-                let m = timeStrToMinutes(r['Office Hours']);
+                let m = timeStrToMinutes(safeGet(r, ['worktime', 'officehour', 'officework']));
                 if(m > 0) { totalWorkMins += m; validWorkDays++; }
             });
             const avgWork = validWorkDays > 0 ? formatMins(totalWorkMins / validWorkDays) : "--:--";
 
+            const hL = safeGet(row, ['leavehome', 'homeleave']);
+            const oA = safeGet(row, ['arriveoffice', 'officearrive']);
+            const oL = safeGet(row, ['leaveoffice', 'officeleave']);
+            const hA = safeGet(row, ['arrivehome', 'homearrive']);
+            const workH = safeGet(row, ['worktime', 'officehour', 'officework']);
+
             document.getElementById('sum-m-time').innerText = commutes.morning ? commutes.morning + " min" : "--";
             document.getElementById('sum-e-time').innerText = commutes.evening ? commutes.evening + " min" : "--";
-            document.getElementById('sum-leave-home').innerText = formatTime(row['Leave Home']);
-            document.getElementById('sum-arrive-office').innerText = formatTime(row['Arrive Office']);
-            document.getElementById('sum-leave-office').innerText = formatTime(row['Leave Office']);
-            document.getElementById('sum-arrive-home').innerText = formatTime(row['Arrive Home']);
+            document.getElementById('sum-leave-home').innerText = formatTime(hL);
+            document.getElementById('sum-arrive-office').innerText = formatTime(oA);
+            document.getElementById('sum-leave-office').innerText = formatTime(oL);
+            document.getElementById('sum-arrive-home').innerText = formatTime(hA);
 
-            let mWork = timeStrToMinutes(row['Office Hours']);
+            let mWork = timeStrToMinutes(workH);
             document.getElementById('sum-work-hour').innerText = mWork ? formatMins(mWork) : "--:--";
             document.getElementById('sum-avg-work').innerText = avgWork;
         }
@@ -155,7 +201,6 @@
         function renderAdvancedCharts(filteredData) {
             const labels = filteredData.map(r => parseDate(r.Date)?.toLocaleDateString([], {day:'numeric', month:'short'}));
             
-            // 1. Transit Compare Chart
             const mTransit = filteredData.map(r => getCommuteTimes(r).morning || null);
             const eTransit = filteredData.map(r => getCommuteTimes(r).evening || null);
             
@@ -169,18 +214,16 @@
                 options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } } }
             });
 
-            // Reusable Time Chart Options
             const timeChartOptions = {
                 responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => decimalToTime(ctx.raw) } } },
                 scales: { y: { ticks: { callback: (val) => decimalToTime(val), font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } }
             };
 
-            // 2. Individual Time Trends
-            const lhData = filteredData.map(r => timeToDecimal(r['Leave Home']));
-            const aoData = filteredData.map(r => timeToDecimal(r['Arrive Office']));
-            const loData = filteredData.map(r => timeToDecimal(r['Leave Office']));
-            const ahData = filteredData.map(r => timeToDecimal(r['Arrive Home']));
+            const lhData = filteredData.map(r => timeToDecimal(safeGet(r, ['leavehome', 'homeleave'])));
+            const aoData = filteredData.map(r => timeToDecimal(safeGet(r, ['arriveoffice', 'officearrive'])));
+            const loData = filteredData.map(r => timeToDecimal(safeGet(r, ['leaveoffice', 'officeleave'])));
+            const ahData = filteredData.map(r => timeToDecimal(safeGet(r, ['arrivehome', 'homearrive'])));
 
             if(lhChartObj) lhChartObj.destroy();
             lhChartObj = new Chart(document.getElementById('lhChart'), { type: 'line', data: { labels: labels, datasets: [{ data: lhData, borderColor: '#f43f5e', tension: 0.3, pointBackgroundColor: '#f43f5e' }] }, options: timeChartOptions });
@@ -210,8 +253,8 @@
                 
                 let row = allData.find(r => parseDate(r.Date)?.toDateString() === target.toDateString());
                 if(row) {
-                    let early = timeStrToMinutes(row['Early']);
-                    let late = timeStrToMinutes(row['Late']);
+                    let early = timeStrToMinutes(safeGet(row, ['early']));
+                    let late = timeStrToMinutes(safeGet(row, ['late']));
                     if (early) dataPoints[i] = early;
                     if (late) dataPoints[i] = -Math.abs(late);
                 }
@@ -262,27 +305,31 @@
                 }
             }
 
-            // Sync Graphs
             renderAdvancedCharts(filtered);
 
-            // Render Table
             tbody.innerHTML = "";
             filtered.forEach(row => {
                 const c = getCommuteTimes(row);
                 let pd = parseDate(row.Date);
                 let fDate = pd ? `${String(pd.getDate()).padStart(2,'0')}/${String(pd.getMonth()+1).padStart(2,'0')}/${pd.getFullYear()}` : row.Date;
 
+                const hL = safeGet(row, ['leavehome', 'homeleave']);
+                const oA = safeGet(row, ['arriveoffice', 'officearrive']);
+                const oL = safeGet(row, ['leaveoffice', 'officeleave']);
+                const hA = safeGet(row, ['arrivehome', 'homearrive']);
+                const workH = safeGet(row, ['worktime', 'officehour', 'officework']);
+
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-slate-100 hover:bg-slate-50 transition-colors text-[11px]";
                 tr.innerHTML = `
                     <td class="px-2 py-3 font-bold text-slate-700 whitespace-nowrap">${fDate}</td>
-                    <td class="px-2 py-3">${formatTime(row['Leave Home'])}</td>
+                    <td class="px-2 py-3">${formatTime(hL)}</td>
                     <td class="px-2 py-3 font-medium text-slate-400 italic">${c.morning ? c.morning + 'm' : '--'}</td>
-                    <td class="px-2 py-3 text-emerald-600 font-bold">${formatTime(row['Arrive Office'])}</td>
-                    <td class="px-2 py-3 font-bold text-indigo-600">${formatMins(timeStrToMinutes(row['Office Hours']))}</td>
-                    <td class="px-2 py-3 text-rose-600 font-bold">${formatTime(row['Leave Office'])}</td>
+                    <td class="px-2 py-3 text-emerald-600 font-bold">${formatTime(oA)}</td>
+                    <td class="px-2 py-3 font-bold text-indigo-600">${formatMins(timeStrToMinutes(workH))}</td>
+                    <td class="px-2 py-3 text-rose-600 font-bold">${formatTime(oL)}</td>
                     <td class="px-2 py-3 font-medium text-slate-400 italic">${c.evening ? c.evening + 'm' : '--'}</td>
-                    <td class="px-2 py-3">${formatTime(row['Arrive Home'])}</td>
+                    <td class="px-2 py-3">${formatTime(hA)}</td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -297,7 +344,6 @@
 
     <div id="dashboard" class="hidden space-y-4">
         
-        <!-- Header -->
         <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
             <div>
                 <h1 class="text-xl font-black text-slate-800 tracking-tight leading-tight">Travel & Work <br>Insights</h1>
@@ -308,10 +354,8 @@
             </button>
         </div>
 
-        <!-- Today's Visual Timeline -->
         <div class="glass-card">
             <h2 class="text-sm font-bold text-slate-800 mb-6"><i class="fa-solid fa-route text-sky-400 mr-2"></i> Real-Time Journey</h2>
-            
             <div class="flex w-full relative items-start">
                 
                 <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
@@ -363,12 +407,9 @@
             </div>
         </div>
 
-        <!-- Today's Summary Grid -->
         <div class="glass-card">
             <h2 class="text-sm font-bold text-slate-800 mb-4"><i class="fa-solid fa-calendar-day text-blue-500 mr-2"></i> Today's Summary</h2>
-            
             <div class="grid grid-cols-2 gap-y-6 border-t border-slate-100 pt-5 relative">
-                
                 <div class="text-center border-r border-slate-100 pr-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Travel Time</p>
                     <p class="text-[10px] text-slate-500 mb-1">Home to office</p>
@@ -376,7 +417,6 @@
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">Office to Home</p>
                     <p class="text-lg font-black text-slate-800 leading-none" id="sum-e-time">--</p>
                 </div>
-
                 <div class="text-center pl-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Morning Commute</p>
                     <p class="text-[10px] text-slate-500 mb-1">Leave Home at</p>
@@ -384,9 +424,7 @@
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrive Office at</p>
                     <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-office">--:--</p>
                 </div>
-
                 <div class="col-span-2 border-b border-slate-100 my-[-8px]"></div>
-
                 <div class="text-center border-r border-slate-100 pr-2 pt-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Evening Commute</p>
                     <p class="text-[10px] text-slate-500 mb-1">Office Leave at</p>
@@ -394,7 +432,6 @@
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrived home at</p>
                     <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-home">--:--</p>
                 </div>
-
                 <div class="text-center pl-2 pt-2">
                     <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Work Details</p>
                     <p class="text-[10px] text-slate-500 mb-1">todays work hour</p>
@@ -402,11 +439,9 @@
                     <p class="text-[10px] text-slate-500 mt-4 mb-1">average work hour</p>
                     <p class="text-lg font-black text-slate-800 leading-none" id="sum-avg-work">--:--</p>
                 </div>
-
             </div>
         </div>
 
-        <!-- Filters & History Section -->
         <div class="flex flex-col">
             <label class="text-[10px] font-bold text-slate-500 uppercase mb-1">Global Date Filter</label>
             <select id="tableRangeSelect" onchange="updateTableAndGraphs()" class="bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-bold py-2 px-2 rounded focus:outline-none w-full shadow-sm mb-2">
@@ -421,7 +456,6 @@
             </div>
         </div>
 
-        <!-- Strict Mon-Fri Chart -->
         <div class="glass-card">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-sm font-bold text-slate-800"><i class="fa-regular fa-calendar-check text-indigo-500 mr-2"></i> Current Week (Mon-Fri)</h2>
@@ -433,7 +467,6 @@
             <div class="h-48 w-full"><canvas id="weekChart"></canvas></div>
         </div>
 
-        <!-- 5 New Dynamic Charts -->
         <div class="glass-card">
             <h2 class="text-sm font-bold text-slate-800 mb-4"><i class="fa-solid fa-motorcycle text-sky-500 mr-2"></i> Transit Time Comparison</h2>
             <div class="h-48 w-full"><canvas id="transitChart"></canvas></div>
@@ -458,7 +491,6 @@
             </div>
         </div>
 
-        <!-- Data Table Section -->
         <div class="glass-card overflow-hidden">
             <div class="flex flex-col mb-4">
                 <h2 class="text-sm font-bold text-slate-800"><i class="fa fa-table-list text-purple-500 mr-2"></i> Log History Table</h2>
@@ -478,7 +510,6 @@
                         </tr>
                     </thead>
                     <tbody id="tableBody">
-                        <!-- Populated by JS -->
                     </tbody>
                 </table>
             </div>
