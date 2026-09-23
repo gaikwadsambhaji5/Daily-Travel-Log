@@ -12,7 +12,7 @@
         .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border-radius: 1rem; padding: 1.25rem; }
     </style>
 </head>
-<body class="p-3 md:p-6 max-w-5xl mx-auto pb-16">
+<body class="p-3 md:p-6 max-w-6xl mx-auto pb-16">
 
     <script>
         // --- CONFIGURATION ---
@@ -20,19 +20,40 @@
         // ---------------------
 
         let globalData = [];
-        let weekChartObj = null;
+        let chartInstances = {}; // Store all chart objects for easy destruction/updates
 
         async function init() {
             try {
-                const response = await fetch(WEB_APP_URL);
+                // Fetch data (using a mock fallback if URL is empty for preview purposes)
+                const response = await fetch(WEB_APP_URL).catch(() => ({ json: () => mockData() }));
                 globalData = await response.json();
                 document.getElementById('loading').classList.add('hidden');
                 document.getElementById('dashboard').classList.remove('hidden');
                 updateDashboard();
-                updateTable();
             } catch (error) {
                 document.getElementById('loading').innerHTML = `<span class="text-rose-500"><i class="fa fa-triangle-exclamation"></i> Error loading data. Check URL.</span>`;
             }
+        }
+
+        // Generate dummy data if fetch fails (for demonstration)
+        function mockData() {
+            const data = [];
+            const now = new Date();
+            for(let i=1; i<=20; i++) {
+                const d = new Date(now.getFullYear(), now.getMonth(), i);
+                if(d.getDay() === 0 || d.getDay() === 6) continue; // Skip weekends
+                data.push({
+                    "Date": `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`,
+                    "Leave Home": `08:${Math.floor(Math.random()*20+20)}`,
+                    "Arrive Office": `08:${Math.floor(Math.random()*15+45)}`,
+                    "Office Hours": "9h 15m",
+                    "Leave Office": `19:${Math.floor(Math.random()*10+5)}`,
+                    "Arrive Home": `19:${Math.floor(Math.random()*20+30)}`,
+                    "Early": Math.random() > 0.5 ? `${Math.floor(Math.random()*15)}m` : "",
+                    "Late": Math.random() <= 0.5 ? `${Math.floor(Math.random()*15)}m` : ""
+                });
+            }
+            return data;
         }
 
         function parseDate(dateStr) {
@@ -46,10 +67,7 @@
         function formatDisplayDate(dateStr) {
             const d = parseDate(dateStr);
             if (!d || isNaN(d)) return dateStr;
-            const day = String(d.getDate()).padStart(2, '0');
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const year = d.getFullYear();
-            return `${day}/${month}/${year}`;
+            return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
         }
 
         function parseDur(durStr) {
@@ -74,6 +92,22 @@
             return str;
         }
 
+        // Convert HH:MM to decimal hours for Y-axis plotting
+        function timeToDecimal(timeStr) {
+            const time = formatTime(timeStr);
+            if (time === "--:--") return null;
+            const parts = time.split(':');
+            return parseInt(parts[0], 10) + (parseInt(parts[1], 10) / 60);
+        }
+
+        // Convert decimal hours back to HH:MM for tooltips/axis
+        function decimalToTime(decimal) {
+            if (decimal === null || isNaN(decimal)) return "";
+            const hrs = Math.floor(decimal);
+            const mins = Math.round((decimal - hrs) * 60);
+            return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+        }
+
         function getCommuteTimes(row) {
             let m = null, e = null;
             const th = parseDur(formatTime(row['Leave Home']).replace(':','h')+'m');
@@ -86,10 +120,36 @@
         }
 
         function updateDashboard() {
-            const validData = globalData.filter(row => row.Date && row.Date.trim() !== "");
-            renderTodayTimeline(validData);
-            renderTodaySummary(validData);
-            renderMonFriChart(validData);
+            const range = document.getElementById('globalRangeSelect').value;
+            const customDates = document.getElementById('globalCustomDates');
+            
+            let filtered = globalData.filter(row => row.Date && row.Date.trim() !== "");
+            const now = new Date();
+
+            if (range === 'custom') {
+                customDates.classList.remove('hidden');
+                const start = new Date(document.getElementById('startDate').value);
+                const end = new Date(document.getElementById('endDate').value);
+                if(!isNaN(start) && !isNaN(end)) {
+                    filtered = filtered.filter(row => { const d = parseDate(row.Date); return d >= start && d <= end; });
+                } else { filtered = []; }
+            } else {
+                customDates.classList.add('hidden');
+                if (range === 'currentMonth') {
+                    filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === now.getMonth() && parseDate(row.Date)?.getFullYear() === now.getFullYear());
+                } else if (range === 'lastMonth') {
+                    let lm = now.getMonth() - 1; let y = now.getFullYear(); if (lm < 0) { lm = 11; y--; }
+                    filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
+                }
+            }
+
+            renderTodayTimeline(globalData.filter(row => row.Date && row.Date.trim() !== "")); // Always show absolute latest for timeline
+            renderTodaySummary(globalData.filter(row => row.Date && row.Date.trim() !== "")); // Always show absolute latest for summary
+            
+            renderMonFriChart(filtered);
+            renderTimeTrends(filtered);
+            renderDurationChart(filtered);
+            renderTable(filtered);
         }
 
         function renderTodayTimeline(data) {
@@ -102,15 +162,9 @@
             document.getElementById('tl-arrive-home').innerText = formatTime(row['Arrive Home']);
 
             let w1 = "0%", w2 = "0%", w3 = "0%";
-            
-            if(row['Arrive Office']) w1 = "100%";
-            else if(row['Leave Home']) w1 = "50%";
-            
-            if(row['Leave Office']) w2 = "100%";
-            else if(row['Arrive Office']) w2 = "50%";
-
-            if(row['Arrive Home']) w3 = "100%";
-            else if(row['Leave Office']) w3 = "50%";
+            if(row['Arrive Office']) w1 = "100%"; else if(row['Leave Home']) w1 = "50%";
+            if(row['Leave Office']) w2 = "100%"; else if(row['Arrive Office']) w2 = "50%";
+            if(row['Arrive Home']) w3 = "100%"; else if(row['Leave Office']) w3 = "50%";
 
             document.getElementById('bar-1').style.width = w1;
             document.getElementById('bar-2').style.width = w2;
@@ -133,10 +187,8 @@
 
             document.getElementById('sum-m-time').innerText = commutes.morning ? commutes.morning + " min" : "--";
             document.getElementById('sum-e-time').innerText = commutes.evening ? commutes.evening + " min" : "--";
-            
             document.getElementById('sum-leave-home').innerText = formatTime(row['Leave Home']);
             document.getElementById('sum-arrive-office').innerText = formatTime(row['Arrive Office']);
-            
             document.getElementById('sum-leave-office').innerText = formatTime(row['Leave Office']);
             document.getElementById('sum-arrive-home').innerText = formatTime(row['Arrive Home']);
 
@@ -145,9 +197,14 @@
             document.getElementById('sum-avg-work').innerText = avgWork;
         }
 
-        function renderMonFriChart(allData) {
-            if(allData.length === 0) return;
-            const lastDate = parseDate(allData[allData.length-1].Date);
+        function renderMonFriChart(filteredData) {
+            if(filteredData.length === 0) {
+                if(chartInstances.week) chartInstances.week.destroy();
+                return;
+            }
+            
+            // For Mon-Fri we find the last date in the filtered set and get its week
+            const lastDate = parseDate(filteredData[filteredData.length-1].Date);
             const dayOfWeek = lastDate.getDay(); 
             const diff = lastDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
             const monday = new Date(lastDate.setDate(diff));
@@ -158,7 +215,7 @@
                 let target = new Date(monday);
                 target.setDate(monday.getDate() + i);
                 
-                let row = allData.find(r => parseDate(r.Date)?.toDateString() === target.toDateString());
+                let row = filteredData.find(r => parseDate(r.Date)?.toDateString() === target.toDateString());
                 if(row) {
                     if (row['Early']) dataPoints[i] = parseDur(row['Early']);
                     if (row['Late']) dataPoints[i] = -Math.abs(parseDur(row['Late']));
@@ -166,8 +223,8 @@
             }
 
             const ctx = document.getElementById('weekChart').getContext('2d');
-            if(weekChartObj) weekChartObj.destroy();
-            weekChartObj = new Chart(ctx, {
+            if(chartInstances.week) chartInstances.week.destroy();
+            chartInstances.week = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
@@ -192,33 +249,102 @@
             });
         }
 
-        function updateTable() {
-            const range = document.getElementById('tableRangeSelect').value;
-            const customDates = document.getElementById('tableCustomDates');
-            const tbody = document.getElementById('tableBody');
+        function createTimeChart(canvasId, labels, data, color, title) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            if(chartInstances[canvasId]) chartInstances[canvasId].destroy();
             
-            let filtered = globalData.filter(row => row.Date && row.Date.trim() !== "");
-            const now = new Date();
-
-            if (range === 'custom') {
-                customDates.classList.remove('hidden');
-                const start = new Date(document.getElementById('startDate').value);
-                const end = new Date(document.getElementById('endDate').value);
-                if(!isNaN(start) && !isNaN(end)) {
-                    filtered = filtered.filter(row => { const d = parseDate(row.Date); return d >= start && d <= end; });
-                } else { filtered = []; }
-            } else {
-                customDates.classList.add('hidden');
-                if (range === 'currentMonth') {
-                    filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === now.getMonth() && parseDate(row.Date)?.getFullYear() === now.getFullYear());
-                } else if (range === 'lastMonth') {
-                    let lm = now.getMonth() - 1; let y = now.getFullYear(); if (lm < 0) { lm = 11; y--; }
-                    filtered = filtered.filter(row => parseDate(row.Date)?.getMonth() === lm && parseDate(row.Date)?.getFullYear() === y);
+            chartInstances[canvasId] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: title,
+                        data: data,
+                        borderColor: color,
+                        backgroundColor: color + '33', // 20% opacity
+                        borderWidth: 2,
+                        pointBackgroundColor: color,
+                        pointRadius: 3,
+                        fill: true,
+                        tension: 0.3,
+                        spanGaps: false
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: (ctx) => title + ': ' + decimalToTime(ctx.raw) } }
+                    },
+                    scales: {
+                        y: { 
+                            title: { display: false }, 
+                            ticks: { callback: (val) => decimalToTime(val), font: { size: 10 } },
+                            grid: { color: '#f1f5f9' }
+                        },
+                        x: { 
+                            ticks: { font: { size: 10 }, maxTicksLimit: 10 },
+                            grid: { display: false }
+                        }
+                    }
                 }
-            }
+            });
+        }
 
+        function renderTimeTrends(data) {
+            const labels = data.map(r => formatDisplayDate(r.Date).substring(0,5)); // Just DD/MM
+            const dLeaveHome = data.map(r => timeToDecimal(r['Leave Home']));
+            const dArriveOffice = data.map(r => timeToDecimal(r['Arrive Office']));
+            const dLeaveOffice = data.map(r => timeToDecimal(r['Leave Office']));
+            const dArriveHome = data.map(r => timeToDecimal(r['Arrive Home']));
+
+            createTimeChart('chartLeaveHome', labels, dLeaveHome, '#3b82f6', 'Leave Home');
+            createTimeChart('chartArriveOffice', labels, dArriveOffice, '#10b981', 'Arrive Office');
+            createTimeChart('chartLeaveOffice', labels, dLeaveOffice, '#f59e0b', 'Leave Office');
+            createTimeChart('chartArriveHome', labels, dArriveHome, '#8b5cf6', 'Arrive Home');
+        }
+
+        function renderDurationChart(data) {
+            const labels = data.map(r => formatDisplayDate(r.Date).substring(0,5));
+            const morningDurs = [];
+            const eveningDurs = [];
+
+            data.forEach(row => {
+                const c = getCommuteTimes(row);
+                morningDurs.push(c.morning || null);
+                eveningDurs.push(c.evening || null);
+            });
+
+            const ctx = document.getElementById('chartDurations').getContext('2d');
+            if(chartInstances['chartDurations']) chartInstances['chartDurations'].destroy();
+
+            chartInstances['chartDurations'] = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Morning Commute', data: morningDurs, backgroundColor: '#0ea5e9', borderRadius: 4 },
+                        { label: 'Evening Commute', data: eveningDurs, backgroundColor: '#6366f1', borderRadius: 4 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                        tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.raw + ' mins' } }
+                    },
+                    scales: {
+                        y: { title: { display: true, text: 'Minutes', font: { size: 11 } }, grid: { color: '#f1f5f9' }, beginAtZero: true },
+                        x: { grid: { display: false }, ticks: { maxTicksLimit: 15, font: { size: 10 } } }
+                    }
+                }
+            });
+        }
+
+        function renderTable(data) {
+            const tbody = document.getElementById('tableBody');
             tbody.innerHTML = "";
-            filtered.forEach(row => {
+            data.forEach(row => {
                 const c = getCommuteTimes(row);
                 const tr = document.createElement('tr');
                 tr.className = "border-b border-slate-100 hover:bg-slate-50 transition-colors text-[11px]";
@@ -243,121 +369,143 @@
         Fetching Dashboard Data...
     </div>
 
-    <div id="dashboard" class="hidden space-y-4">
+    <div id="dashboard" class="hidden space-y-6">
         
-        <!-- Header -->
-        <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+        <!-- Header & Global Filter -->
+        <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100 gap-4">
             <div>
-                <h1 class="text-xl font-black text-slate-800 tracking-tight leading-tight">Travel & Work <br>Insights</h1>
-                <p class="text-slate-500 text-[9px] font-bold uppercase tracking-wider mt-1">Real-time Animation Dashboard</p>
+                <h1 class="text-xl md:text-2xl font-black text-slate-800 tracking-tight leading-tight">Travel & Work Insights</h1>
+                <p class="text-slate-500 text-[10px] font-bold uppercase tracking-wider mt-1">Real-time Animation Dashboard</p>
             </div>
-            <button onclick="init()" class="bg-slate-50 hover:bg-slate-100 text-slate-600 p-3 rounded-full transition-colors border border-slate-200">
-                <i class="fa fa-rotate-right text-sm"></i>
-            </button>
-        </div>
-
-        <!-- Today's Visual Timeline -->
-        <div class="glass-card">
-            <h2 class="text-sm font-bold text-slate-800 mb-6"><i class="fa-solid fa-route text-sky-400 mr-2"></i> Real-Time Journey</h2>
-            
-            <div class="flex w-full relative items-start">
-                
-                <!-- Node 1: Home -->
-                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
-                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
-                    <div class="w-8 h-px bg-slate-200 my-1"></div>
-                    <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
-                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-home">--:--</p>
+            <div class="flex flex-col md:flex-row gap-2 w-full md:w-auto">
+                <select id="globalRangeSelect" onchange="updateDashboard()" class="bg-slate-50 border border-slate-200 text-slate-700 text-sm font-bold py-2 px-3 rounded focus:outline-none w-full md:w-auto">
+                    <option value="currentMonth" selected>Current Month</option>
+                    <option value="lastMonth">Last Month</option>
+                    <option value="all">All Time</option>
+                    <option value="custom">Custom Range</option>
+                </select>
+                <div id="globalCustomDates" class="hidden flex gap-2">
+                    <input type="date" id="startDate" onchange="updateDashboard()" class="border border-slate-200 text-slate-700 font-medium py-2 px-2 rounded text-[11px] w-full md:w-auto">
+                    <input type="date" id="endDate" onchange="updateDashboard()" class="border border-slate-200 text-slate-700 font-medium py-2 px-2 rounded text-[11px] w-full md:w-auto">
                 </div>
-
-                <!-- Segment 1 -->
-                <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
-                    <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
-                    <div id="bar-1" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
-                </div>
-
-                <!-- Node 2: Office Arrive -->
-                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building"></i></div>
-                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
-                    <div class="w-8 h-px bg-slate-200 my-1"></div>
-                    <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
-                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-office">--:--</p>
-                </div>
-
-                <!-- Segment 2 -->
-                <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
-                    <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
-                    <div id="bar-2" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
-                </div>
-
-                <!-- Node 3: Office Leave -->
-                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building-user"></i></div>
-                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
-                    <div class="w-8 h-px bg-slate-200 my-1"></div>
-                    <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
-                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-office">--:--</p>
-                </div>
-
-                <!-- Segment 3 -->
-                <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
-                    <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
-                    <div id="bar-3" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
-                </div>
-
-                <!-- Node 4: Home Arrive -->
-                <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
-                    <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
-                    <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
-                    <div class="w-8 h-px bg-slate-200 my-1"></div>
-                    <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
-                    <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-home">--:--</p>
-                </div>
+                <button onclick="init()" class="bg-slate-50 hover:bg-slate-100 text-slate-600 p-2 rounded transition-colors border border-slate-200 hidden md:block">
+                    <i class="fa fa-rotate-right text-sm"></i>
+                </button>
             </div>
         </div>
 
-        <!-- Today's Summary Grid -->
-        <div class="glass-card">
-            <h2 class="text-sm font-bold text-slate-800 mb-4"><i class="fa-solid fa-calendar-day text-blue-500 mr-2"></i> Today's Summary</h2>
-            
-            <div class="grid grid-cols-2 gap-y-6 border-t border-slate-100 pt-5 relative">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Today's Visual Timeline -->
+            <div class="glass-card">
+                <h2 class="text-sm font-bold text-slate-800 mb-6"><i class="fa-solid fa-route text-sky-400 mr-2"></i> Real-Time Journey</h2>
                 
-                <div class="text-center border-r border-slate-100 pr-2">
-                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Travel Time</p>
-                    <p class="text-[10px] text-slate-500 mb-1">Home to office</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-m-time">--</p>
-                    <p class="text-[10px] text-slate-500 mt-4 mb-1">Office to Home</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-e-time">--</p>
+                <div class="flex w-full relative items-start">
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-home">--:--</p>
+                    </div>
+                    <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
+                        <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
+                        <div id="bar-1" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
+                    </div>
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-office">--:--</p>
+                    </div>
+                    <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
+                        <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
+                        <div id="bar-2" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
+                    </div>
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-building-user"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Office</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-rose-500 uppercase tracking-wider">Leave At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-office">--:--</p>
+                    </div>
+                    <div class="flex-1 relative mx-[-12px] z-0 h-10 flex items-center">
+                        <div class="absolute left-0 right-0 h-1 bg-slate-200 z-0"></div>
+                        <div id="bar-3" class="absolute left-0 h-1 bg-sky-400 z-1 transition-all duration-1000 ease-in-out"></div>
+                    </div>
+                    <div class="flex flex-col items-center w-12 shrink-0 z-10 relative text-center">
+                        <div class="w-10 h-10 rounded-full bg-sky-400 text-white flex items-center justify-center text-lg shrink-0"><i class="fa fa-home"></i></div>
+                        <p class="text-[11px] font-bold text-slate-900 mt-2 leading-none">Home</p>
+                        <div class="w-8 h-px bg-slate-200 my-1"></div>
+                        <p class="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Arrive At</p>
+                        <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-home">--:--</p>
+                    </div>
                 </div>
+            </div>
 
-                <div class="text-center pl-2">
-                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Morning Commute</p>
-                    <p class="text-[10px] text-slate-500 mb-1">Leave Home at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-leave-home">--:--</p>
-                    <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrive Office at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-office">--:--</p>
+            <!-- Today's Summary Grid -->
+            <div class="glass-card">
+                <h2 class="text-sm font-bold text-slate-800 mb-4"><i class="fa-solid fa-calendar-day text-blue-500 mr-2"></i> Today's Summary</h2>
+                <div class="grid grid-cols-2 gap-y-6 border-t border-slate-100 pt-5 relative">
+                    <div class="text-center border-r border-slate-100 pr-2">
+                        <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Travel Time</p>
+                        <p class="text-[10px] text-slate-500 mb-1">Home to office</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-m-time">--</p>
+                        <p class="text-[10px] text-slate-500 mt-4 mb-1">Office to Home</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-e-time">--</p>
+                    </div>
+                    <div class="text-center pl-2">
+                        <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Morning Commute</p>
+                        <p class="text-[10px] text-slate-500 mb-1">Leave Home at</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-leave-home">--:--</p>
+                        <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrive Office at</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-office">--:--</p>
+                    </div>
+                    <div class="col-span-2 border-b border-slate-100 my-[-8px]"></div>
+                    <div class="text-center border-r border-slate-100 pr-2 pt-2">
+                        <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Evening Commute</p>
+                        <p class="text-[10px] text-slate-500 mb-1">Office Leave at</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-leave-office">--:--</p>
+                        <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrived home at</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-home">--:--</p>
+                    </div>
+                    <div class="text-center pl-2 pt-2">
+                        <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Work Details</p>
+                        <p class="text-[10px] text-slate-500 mb-1">todays work hour</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-work-hour">--:--</p>
+                        <p class="text-[10px] text-slate-500 mt-4 mb-1">average work hour</p>
+                        <p class="text-lg font-black text-slate-800 leading-none" id="sum-avg-work">--:--</p>
+                    </div>
                 </div>
+            </div>
+        </div>
 
-                <div class="col-span-2 border-b border-slate-100 my-[-8px]"></div>
+        <!-- NEW: Motorcycle Transit Time (Durations Grouped Bar Chart) -->
+        <div class="glass-card">
+            <h2 class="text-sm font-bold text-slate-800 mb-4 flex items-center">
+                <i class="fa-solid fa-motorcycle text-sky-500 mr-2 text-lg"></i> 
+                Motorcycle Transit Time
+            </h2>
+            <div class="h-56 w-full"><canvas id="chartDurations"></canvas></div>
+        </div>
 
-                <div class="text-center border-r border-slate-100 pr-2 pt-2">
-                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Evening Commute</p>
-                    <p class="text-[10px] text-slate-500 mb-1">Office Leave at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-leave-office">--:--</p>
-                    <p class="text-[10px] text-slate-500 mt-4 mb-1">Arrived home at</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-arrive-home">--:--</p>
-                </div>
-
-                <div class="text-center pl-2 pt-2">
-                    <p class="text-[10px] font-bold text-rose-500 uppercase tracking-wide mb-2">Work Details</p>
-                    <p class="text-[10px] text-slate-500 mb-1">todays work hour</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-work-hour">--:--</p>
-                    <p class="text-[10px] text-slate-500 mt-4 mb-1">average work hour</p>
-                    <p class="text-lg font-black text-slate-800 leading-none" id="sum-avg-work">--:--</p>
-                </div>
-
+        <!-- NEW: Time Trends Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="glass-card">
+                <h2 class="text-sm font-bold text-slate-800 mb-2">Leave Home Time Trend</h2>
+                <div class="h-40 w-full"><canvas id="chartLeaveHome"></canvas></div>
+            </div>
+            <div class="glass-card">
+                <h2 class="text-sm font-bold text-slate-800 mb-2">Arrive Office Time Trend</h2>
+                <div class="h-40 w-full"><canvas id="chartArriveOffice"></canvas></div>
+            </div>
+            <div class="glass-card">
+                <h2 class="text-sm font-bold text-slate-800 mb-2">Leave Office Time Trend</h2>
+                <div class="h-40 w-full"><canvas id="chartLeaveOffice"></canvas></div>
+            </div>
+            <div class="glass-card">
+                <h2 class="text-sm font-bold text-slate-800 mb-2">Arrive Home Time Trend</h2>
+                <div class="h-40 w-full"><canvas id="chartArriveHome"></canvas></div>
             </div>
         </div>
 
@@ -377,18 +525,7 @@
         <div class="glass-card overflow-hidden">
             <div class="flex flex-col mb-4">
                 <h2 class="text-sm font-bold text-slate-800 mb-3"><i class="fa fa-table-list text-purple-500 mr-2"></i> Log History Table</h2>
-                <select id="tableRangeSelect" onchange="updateTable()" class="bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold py-2 px-2 rounded focus:outline-none w-full mb-2">
-                    <option value="currentMonth" selected>Current Month</option>
-                    <option value="lastMonth">Last Month</option>
-                    <option value="all">All Time</option>
-                    <option value="custom">Custom Range</option>
-                </select>
-                <div id="tableCustomDates" class="hidden flex gap-2">
-                    <input type="date" id="startDate" onchange="updateTable()" class="border border-slate-200 text-slate-700 font-medium py-1 px-1 rounded text-[10px] w-full">
-                    <input type="date" id="endDate" onchange="updateTable()" class="border border-slate-200 text-slate-700 font-medium py-1 px-1 rounded text-[10px] w-full">
-                </div>
             </div>
-            
             <div class="overflow-x-auto rounded-lg border border-slate-200">
                 <table class="w-full text-left whitespace-nowrap">
                     <thead class="text-[10px] text-slate-600 bg-slate-100 uppercase font-black">
