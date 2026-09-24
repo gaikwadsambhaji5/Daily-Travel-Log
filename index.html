@@ -11,7 +11,6 @@
         body { font-family: 'Inter', -apple-system, sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
         .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border-radius: 1rem; padding: 1.25rem; }
         
-        /* Updated Timeline Lines for rounded gaps */
         .timeline-line-bg { position: absolute; left: 0; right: 0; top: 20px; transform: translateY(-50%); height: 6px; background: #e2e8f0; z-index: 0; border-radius: 10px; }
         .timeline-line-fill { position: absolute; left: 0; top: 20px; transform: translateY(-50%); height: 6px; background: #38bdf8; z-index: 1; transition: width 0.5s linear; border-radius: 10px; }
     </style>
@@ -26,16 +25,14 @@
         let globalData = [];
         let weekChartObj = null, transitChartObj = null, lhChartObj = null, aoChartObj = null, loChartObj = null, ahChartObj = null;
         
-        // Global object to track the exact real-time averages for the blue line animation
         let liveCommuteState = {
             active: false,
             hL: null, oA: null, oL: null, hA: null,
-            avgM: 30, avgW: 540, avgE: 30 // Defaults (540 mins = 9 hours work)
+            avgM: 30, avgW: 540, avgE: 30 
         };
 
         async function init() {
             try {
-                // UNIVERSAL CACHE BUSTER FIX
                 const fetchUrl = WEB_APP_URL + "?nocache=" + new Date().getTime() + "&rnd=" + Math.random();
                 const response = await fetch(fetchUrl, { cache: 'no-store' });
                 globalData = await response.json();
@@ -77,7 +74,6 @@
             if (!hasData(timeStr)) return null;
             let str = String(timeStr).trim().toLowerCase();
 
-            // Safely parse "10h 3m" durations perfectly
             if (str.match(/(\d+)h/) || (str.match(/(\d+)m/) && !str.includes('am') && !str.includes('pm'))) {
                 let mins = 0;
                 let hMatch = str.match(/(\d+)h/);
@@ -154,12 +150,10 @@
             renderMonFriChart(validData);
         }
 
-        // Sets up the data needed for the Dashboard Timeline
         function renderTodayTimeline(data) {
             if (data.length === 0) return;
             const row = data[data.length - 1];
 
-            // 1. Calculate historical averages based on all sheet data
             let mTotal = 0, mCount = 0;
             let wTotal = 0, wCount = 0;
             let eTotal = 0, eCount = 0;
@@ -181,23 +175,20 @@
             liveCommuteState.avgW = wCount > 0 ? wTotal / wCount : 540;
             liveCommuteState.avgE = eCount > 0 ? eTotal / eCount : 30;
 
-            // 2. Set today's active punches
             liveCommuteState.hL = timeStrToMinutes(safeGet(row, ['leavehome', 'homeleave']));
             liveCommuteState.oA = timeStrToMinutes(safeGet(row, ['arriveoffice', 'officearrive']));
             liveCommuteState.oL = timeStrToMinutes(safeGet(row, ['leaveoffice', 'officeleave']));
             liveCommuteState.hA = timeStrToMinutes(safeGet(row, ['arrivehome', 'homearrive']));
             liveCommuteState.active = true;
 
-            // Set fixed texts
             document.getElementById('tl-leave-home').innerText = formatTime(safeGet(row, ['leavehome', 'homeleave']));
             document.getElementById('tl-arrive-office').innerText = formatTime(safeGet(row, ['arriveoffice', 'officearrive']));
             document.getElementById('tl-leave-office').innerText = formatTime(safeGet(row, ['leaveoffice', 'officeleave']));
             document.getElementById('tl-arrive-home').innerText = formatTime(safeGet(row, ['arrivehome', 'homearrive']));
             
-            animateDashboardTimeline(); // Trigger first frame instantly
+            animateDashboardTimeline();
         }
 
-        // Smooth Real-Time Average Animation Logic
         function animateDashboardTimeline() {
             if (!liveCommuteState.active) return;
 
@@ -208,7 +199,7 @@
 
             function getDiff(startMins) { 
                 let d = currentMins - startMins; 
-                if (d < -720) d += 1440; // Midnight fix
+                if (d < -720) d += 1440; 
                 return d; 
             }
 
@@ -227,13 +218,12 @@
                 w1 = (elapsed / liveCommuteState.avgM) * 100;
             }
 
-            // Apply and clamp to 99% until they successfully hit the next trigger
             document.getElementById('bar-1').style.width = Math.min(Math.max(w1, 0), w1 === 100 ? 100 : 99) + "%";
             document.getElementById('bar-2').style.width = Math.min(Math.max(w2, 0), w2 === 100 ? 100 : 99) + "%";
             document.getElementById('bar-3').style.width = Math.min(Math.max(w3, 0), w3 === 100 ? 100 : 99) + "%";
         }
         
-        setInterval(animateDashboardTimeline, 1000); // Glides blue bar smoothly every second
+        setInterval(animateDashboardTimeline, 1000); 
 
         function renderTodaySummary(data) {
             if (data.length === 0) return;
@@ -305,7 +295,7 @@
             ahChartObj = new Chart(document.getElementById('ahChart'), { type: 'line', data: { labels: labels, datasets: [{ data: ahData, borderColor: '#8b5cf6', tension: 0.3, pointBackgroundColor: '#8b5cf6' }] }, options: timeChartOptions });
         }
 
-        // Fixed Missing Wednesday Bug by creating clean midnights
+        // --- UPGRADED CHART LOGIC WITH A.I. FALLBACK ---
         function renderMonFriChart(allData) {
             if(allData.length === 0) return;
             
@@ -320,16 +310,30 @@
                 let targetDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
                 let targetMidnight = targetDate.getTime();
                 
-                let row = allData.find(r => {
+                // Get all rows for the date and use the LAST one to ignore duplicate empty rows
+                let dayRows = allData.filter(r => {
                     let d = parseDate(r.Date);
                     return d && new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() === targetMidnight;
                 });
                 
-                if(row) {
+                if(dayRows.length > 0) {
+                    let row = dayRows[dayRows.length - 1];
+                    
                     let early = timeStrToMinutes(safeGet(row, ['early']));
                     let late = timeStrToMinutes(safeGet(row, ['late']));
-                    if (early) dataPoints[i] = early;
-                    if (late) dataPoints[i] = -Math.abs(late);
+
+                    // A.I. Fallback: If sheet failed to calculate Early/Late, calculate it live!
+                    if (early === null && late === null) {
+                        let oA = timeStrToMinutes(safeGet(row, ['arriveoffice', 'officearrive']));
+                        if (oA !== null) {
+                            let diffMins = 540 - oA; // 540 is exactly 09:00 AM
+                            if (diffMins >= 0) early = diffMins;
+                            else late = Math.abs(diffMins);
+                        }
+                    }
+
+                    if (early !== null) dataPoints[i] = early;
+                    else if (late !== null) dataPoints[i] = -Math.abs(late);
                 }
             }
 
@@ -341,7 +345,7 @@
                     labels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
                     datasets: [{
                         data: dataPoints,
-                        backgroundColor: ctx => ctx.raw >= 0 ? '#10b981' : '#f43f5e',
+                        backgroundColor: ctx => (ctx.raw !== null && ctx.raw >= 0) ? '#10b981' : '#f43f5e',
                         borderRadius: 4, barPercentage: 0.4
                     }]
                 },
@@ -439,8 +443,7 @@
                     <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-home">--:--</p>
                 </div>
 
-                <!-- Reduced gap: Changed mx-2 to mx-1 -->
-                <div class="flex-1 relative mx-0.7 z-0">
+                <div class="flex-1 relative mx-1 z-0">
                     <div class="timeline-line-bg"></div>
                     <div id="bar-1" class="timeline-line-fill"></div>
                 </div>
@@ -453,7 +456,6 @@
                     <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-arrive-office">--:--</p>
                 </div>
 
-                <!-- Reduced gap: Changed mx-2 to mx-1 -->
                 <div class="flex-1 relative mx-1 z-0">
                     <div class="timeline-line-bg"></div>
                     <div id="bar-2" class="timeline-line-fill"></div>
@@ -467,7 +469,6 @@
                     <p class="text-[14px] font-black text-slate-900 leading-none mt-1" id="tl-leave-office">--:--</p>
                 </div>
 
-                <!-- Reduced gap: Changed mx-2 to mx-1 -->
                 <div class="flex-1 relative mx-1 z-0">
                     <div class="timeline-line-bg"></div>
                     <div id="bar-3" class="timeline-line-fill"></div>
