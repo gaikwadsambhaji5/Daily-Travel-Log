@@ -11,7 +11,7 @@
         body { font-family: 'Inter', -apple-system, sans-serif; background-color: #f8fafc; color: #1e293b; -webkit-tap-highlight-color: transparent; }
         .glass-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); border-radius: 1rem; padding: 1.25rem; }
         .timeline-line-bg { position: absolute; left: 0; right: 0; top: 20px; transform: translateY(-50%); height: 4px; background: #e2e8f0; z-index: 0; }
-        .timeline-line-fill { position: absolute; left: 0; top: 20px; transform: translateY(-50%); height: 4px; background: #38bdf8; z-index: 1; transition: width 1s ease; }
+        .timeline-line-fill { position: absolute; left: 0; top: 20px; transform: translateY(-50%); height: 4px; background: #38bdf8; z-index: 1; transition: width 0.5s linear; }
     </style>
 </head>
 <body class="p-3 md:p-6 max-w-5xl mx-auto pb-16">
@@ -23,6 +23,13 @@
 
         let globalData = [];
         let weekChartObj = null, transitChartObj = null, lhChartObj = null, aoChartObj = null, loChartObj = null, ahChartObj = null;
+        
+        // Global object to track the exact real-time averages for the blue line animation
+        let liveCommuteState = {
+            active: false,
+            hL: null, oA: null, oL: null, hA: null,
+            avgM: 30, avgW: 540, avgE: 30 // Defaults (540 mins = 9 hours work)
+        };
 
         async function init() {
             try {
@@ -41,7 +48,6 @@
             }
         }
 
-        // Bulletproof check for valid time data
         function hasData(val) {
             return val !== null && val !== undefined && String(val).trim() !== "" && String(val).trim() !== "--:--";
         }
@@ -69,7 +75,7 @@
             if (!hasData(timeStr)) return null;
             let str = String(timeStr).trim().toLowerCase();
 
-            // FIX: Safely parse "10h 3m" durations so it doesn't calculate 500+ hour averages!
+            // Safely parse "10h 3m" durations perfectly
             if (str.match(/(\d+)h/) || (str.match(/(\d+)m/) && !str.includes('am') && !str.includes('pm'))) {
                 let mins = 0;
                 let hMatch = str.match(/(\d+)h/);
@@ -146,35 +152,86 @@
             renderMonFriChart(validData);
         }
 
+        // Sets up the data needed for the Dashboard Timeline
         function renderTodayTimeline(data) {
             if (data.length === 0) return;
             const row = data[data.length - 1];
 
-            const hL = safeGet(row, ['leavehome', 'homeleave']);
-            const oA = safeGet(row, ['arriveoffice', 'officearrive']);
-            const oL = safeGet(row, ['leaveoffice', 'officeleave']);
-            const hA = safeGet(row, ['arrivehome', 'homearrive']);
+            // 1. Calculate historical averages based on all sheet data
+            let mTotal = 0, mCount = 0;
+            let wTotal = 0, wCount = 0;
+            let eTotal = 0, eCount = 0;
 
-            document.getElementById('tl-leave-home').innerText = formatTime(hL);
-            document.getElementById('tl-arrive-office').innerText = formatTime(oA);
-            document.getElementById('tl-leave-office').innerText = formatTime(oL);
-            document.getElementById('tl-arrive-home').innerText = formatTime(hA);
+            data.forEach(r => {
+                let th = timeStrToMinutes(safeGet(r, ['leavehome', 'homeleave']));
+                let to = timeStrToMinutes(safeGet(r, ['arriveoffice', 'officearrive']));
+                let tl = timeStrToMinutes(safeGet(r, ['leaveoffice', 'officeleave']));
+                let ta = timeStrToMinutes(safeGet(r, ['arrivehome', 'homearrive']));
+                let tw = timeStrToMinutes(safeGet(r, ['worktime', 'officehour', 'officework']));
 
-            let w1 = "0%", w2 = "0%", w3 = "0%";
+                if(th !== null && to !== null) { let d = to - th; if(d < 0) d += 1440; if(d > 0) { mTotal += d; mCount++; } }
+                if(tw !== null && tw > 0) { wTotal += tw; wCount++; } 
+                else if (to !== null && tl !== null) { let d = tl - to; if(d < 0) d += 1440; if(d > 0) { wTotal += d; wCount++; } }
+                if(tl !== null && ta !== null) { let d = ta - tl; if(d < 0) d += 1440; if(d > 0) { eTotal += d; eCount++; } }
+            });
+
+            liveCommuteState.avgM = mCount > 0 ? mTotal / mCount : 30;
+            liveCommuteState.avgW = wCount > 0 ? wTotal / wCount : 540;
+            liveCommuteState.avgE = eCount > 0 ? eTotal / eCount : 30;
+
+            // 2. Set today's active punches
+            liveCommuteState.hL = timeStrToMinutes(safeGet(row, ['leavehome', 'homeleave']));
+            liveCommuteState.oA = timeStrToMinutes(safeGet(row, ['arriveoffice', 'officearrive']));
+            liveCommuteState.oL = timeStrToMinutes(safeGet(row, ['leaveoffice', 'officeleave']));
+            liveCommuteState.hA = timeStrToMinutes(safeGet(row, ['arrivehome', 'homearrive']));
+            liveCommuteState.active = true;
+
+            // Set fixed texts
+            document.getElementById('tl-leave-home').innerText = formatTime(safeGet(row, ['leavehome', 'homeleave']));
+            document.getElementById('tl-arrive-office').innerText = formatTime(safeGet(row, ['arriveoffice', 'officearrive']));
+            document.getElementById('tl-leave-office').innerText = formatTime(safeGet(row, ['leaveoffice', 'officeleave']));
+            document.getElementById('tl-arrive-home').innerText = formatTime(safeGet(row, ['arrivehome', 'homearrive']));
             
-            if(hasData(oA)) w1 = "100%";
-            else if(hasData(hL)) w1 = "50%";
-            
-            if(hasData(oL)) w2 = "100%";
-            else if(hasData(oA)) w2 = "50%";
-
-            if(hasData(hA)) w3 = "100%";
-            else if(hasData(oL)) w3 = "50%";
-
-            document.getElementById('bar-1').style.width = w1;
-            document.getElementById('bar-2').style.width = w2;
-            document.getElementById('bar-3').style.width = w3;
+            animateDashboardTimeline(); // Trigger first frame instantly
         }
+
+        // Smooth Real-Time Average Animation Logic
+        function animateDashboardTimeline() {
+            if (!liveCommuteState.active) return;
+
+            let now = new Date();
+            let currentMins = now.getHours() * 60 + now.getMinutes() + (now.getSeconds() / 60);
+
+            let w1 = 0, w2 = 0, w3 = 0;
+
+            function getDiff(startMins) { 
+                let d = currentMins - startMins; 
+                if (d < -720) d += 1440; // Midnight fix
+                return d; 
+            }
+
+            if (liveCommuteState.hA !== null) {
+                w1 = 100; w2 = 100; w3 = 100;
+            } else if (liveCommuteState.oL !== null) {
+                w1 = 100; w2 = 100;
+                let elapsed = getDiff(liveCommuteState.oL);
+                w3 = (elapsed / liveCommuteState.avgE) * 100;
+            } else if (liveCommuteState.oA !== null) {
+                w1 = 100;
+                let elapsed = getDiff(liveCommuteState.oA);
+                w2 = (elapsed / liveCommuteState.avgW) * 100;
+            } else if (liveCommuteState.hL !== null) {
+                let elapsed = getDiff(liveCommuteState.hL);
+                w1 = (elapsed / liveCommuteState.avgM) * 100;
+            }
+
+            // Apply and clamp to 99% until they successfully hit the next trigger
+            document.getElementById('bar-1').style.width = Math.min(Math.max(w1, 0), w1 === 100 ? 100 : 99) + "%";
+            document.getElementById('bar-2').style.width = Math.min(Math.max(w2, 0), w2 === 100 ? 100 : 99) + "%";
+            document.getElementById('bar-3').style.width = Math.min(Math.max(w3, 0), w3 === 100 ? 100 : 99) + "%";
+        }
+        
+        setInterval(animateDashboardTimeline, 1000); // Glides blue bar smoothly every second
 
         function renderTodaySummary(data) {
             if (data.length === 0) return;
@@ -246,20 +303,26 @@
             ahChartObj = new Chart(document.getElementById('ahChart'), { type: 'line', data: { labels: labels, datasets: [{ data: ahData, borderColor: '#8b5cf6', tension: 0.3, pointBackgroundColor: '#8b5cf6' }] }, options: timeChartOptions });
         }
 
+        // Fixed Missing Wednesday Bug by creating clean midnights
         function renderMonFriChart(allData) {
             if(allData.length === 0) return;
-            const lastDate = parseDate(allData[allData.length-1].Date);
-            const dayOfWeek = lastDate.getDay(); 
-            const diff = lastDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-            const monday = new Date(lastDate.setDate(diff));
+            
+            let now = new Date();
+            let dayOfWeek = now.getDay(); 
+            let diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+            let monday = new Date(now.getFullYear(), now.getMonth(), diff); 
 
             const dataPoints = [null, null, null, null, null];
             
             for(let i=0; i<5; i++) {
-                let target = new Date(monday);
-                target.setDate(monday.getDate() + i);
+                let targetDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+                let targetMidnight = targetDate.getTime();
                 
-                let row = allData.find(r => parseDate(r.Date)?.toDateString() === target.toDateString());
+                let row = allData.find(r => {
+                    let d = parseDate(r.Date);
+                    return d && new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() === targetMidnight;
+                });
+                
                 if(row) {
                     let early = timeStrToMinutes(safeGet(row, ['early']));
                     let late = timeStrToMinutes(safeGet(row, ['late']));
